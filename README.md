@@ -1,36 +1,114 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Pastelería Online
 
-## Getting Started
+Independent e-commerce platform for a Venezuelan bakery selling individual cake
+portions, with a private administrative panel for two administrators.
 
-First, run the development server:
+**Status: Phase 0 complete — project initialization only.** No business features,
+database migrations or remote services are connected yet. The functional
+specification is [`SPEC.md`](./SPEC.md) (Spanish).
+
+## Tech stack
+
+- Next.js 16 (App Router) + React 19 + TypeScript (strict mode)
+- Tailwind CSS 4
+- Supabase: PostgreSQL, Auth, Storage, Realtime via `@supabase/ssr` (project not
+  provisioned yet)
+- Zod (validation), Vitest (tests), ESLint (flat config)
+- Deployed on Vercel
+
+Architecture: **modular monolith** — no Express, Strapi, microservices or
+background workers. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+
+## Prerequisites
+
+- Node.js 22+ (developed on v22.17)
+- npm 10+
+
+## Installation
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <repo-url> && cd pasteleria-online
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Configure environment variables:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cp .env.example .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Then fill `.env.local` with the values from the Supabase dashboard (the project
+is created in a later phase — see [`docs/ROADMAP.md`](./docs/ROADMAP.md)).
+**Never commit real credentials**; `.env.local` is git-ignored and only
+[`.env.example`](./.env.example) (placeholders, no secrets) is tracked.
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server (http://localhost:3000) |
+| `npm run build` | Production build (type-checks and lints as part of Next.js) |
+| `npm start` | Serve the production build |
+| `npm run lint` | Run ESLint over the project |
+| `npm run typecheck` | Run `tsc --noEmit` (requires a prior `npm run build`/`next typegen` so generated route types exist) |
+| `npm test` | Run the Vitest suite once |
+| `npm run test:watch` | Run Vitest in watch mode |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Testing
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Tests are written with Vitest and colocated with the code they cover as
+`*.test.ts(x)` under `src/`:
 
-## Deploy on Vercel
+```
+src/infrastructure/env.ts
+src/infrastructure/env.test.ts
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The suite runs in a `node` environment and never requires network access, a
+remote Supabase project or real credentials. Shared helpers belong in
+`src/test/`. See [`docs/DECISIONS.md`](./docs/DECISIONS.md) for why React
+Testing Library is not installed yet.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Project structure
+
+```
+pasteleria-online/
+├── docs/                  # ROADMAP, ARCHITECTURE, DECISIONS
+├── src/
+│   ├── app/               # Routes only (App Router)
+│   │   ├── (storefront)/  #   customer-facing routes: /
+│   │   └── (admin)/admin/ #   private admin routes: /admin (no data yet)
+│   ├── components/        # Shared presentational components (no logic)
+│   ├── features/          # One folder per capability (catalog, checkout, …)
+│   ├── domain/            # Framework-free business types and rules
+│   ├── infrastructure/    # External services: Supabase clients, env validation
+│   ├── validation/        # Zod input schemas (server-side authoritative)
+│   └── test/              # Shared testing utilities
+├── public/                # Static assets
+├── .env.example           # Documented variable names, no real credentials
+├── TASKS.md               # Phase checklist (done + next)
+└── SPEC.md                # Functional specification (Spanish)
+```
+
+Each folder inside `src/` contains a README with its rules and planned contents.
+
+## Deployment (Vercel)
+
+1. Import the repository into Vercel (framework auto-detected: Next.js).
+2. Add the environment variables from `.env.example` in the project settings —
+   the two `NEXT_PUBLIC_*` values are public, `SUPABASE_SERVICE_ROLE_KEY` must
+   only ever be set server-side.
+3. Deploy the production branch.
+
+Note: the Supabase project does not exist yet, so a deployment in Phase 0 will
+build and render placeholder pages only — no database calls are made.
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [`SPEC.md`](./SPEC.md) | Functional specification (source of truth, Spanish) |
+| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phases and future requirements (documented, not implemented) |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Layers, folder responsibilities, security invariants |
+| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | Key architectural decisions and their rationale |
+| [`TASKS.md`](./TASKS.md) | Checklist of completed and upcoming tasks |

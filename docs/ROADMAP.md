@@ -21,7 +21,13 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 - Explicitly out of scope: business features, database schema, migrations,
   authentication, checkout, payments, inventory, Figma screens.
 
-## Phase 1 — Foundation: database, catalog and admin access ⬜
+## Phase 1 — Foundation: database, catalog and admin access 🚧
+
+**Progress:** M1 (the first migration — catalog, settings, zones,
+administrators, audit + RLS/storage policies) is written in
+`supabase/migrations/` and validated locally; **it has not been applied
+anywhere** — applying it requires a Supabase project (TASKS B1). The remaining
+items below are not started.
 
 - Create the Supabase project; provision environment variables (no credentials
   in source code).
@@ -39,7 +45,8 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 - Batches (product, initial/remaining quantity, production date, responsible
   admin), FIFO allocation, stock movements (entries, sales, adjustments) with
   audit fields.
-- Online orders reserve stock atomically (24 h expiry, idempotent operations,
+- Online orders reserve stock atomically (20-minute initial expiry plus a
+  15-minute receipt-correction window — DECISIONS #24; idempotent operations,
   PostgreSQL functions/RPC for critical paths).
 - Admin screens for batches, movements and adjustments (production date is
   administrative only and never shown in the store).
@@ -51,7 +58,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 - **Server-side** recalculation of subtotal, delivery fee and total; inventory
   re-check; client prices are never trusted.
 - Delivery zones per SPEC §6 (north zone free, rest of city $5, outside the city
-  manual quote with 24 h reservation).
+  manual quote — reservation timing while a quote is pending is OQ-13).
 - Order entity with private tracking link (random token, hash stored) so
   customers can follow their order without an account; cancellation request from
   the tracking page.

@@ -133,7 +133,7 @@ El checkout mostrará un aviso indicando que la tarifa será verificada y que el
 
 Los administradores podrán corregir la clasificación y ajustar la tarifa.
 
-Los pedidos que requieran cotización quedarán pendientes de confirmación del importe definitivo, con reserva de inventario de hasta 24 horas.
+Los pedidos que requieran cotización quedarán pendientes de confirmación del importe definitivo. La reserva de inventario durante la espera se regirá por las reglas de reservas de la sección 8; el plazo aplicable a estos pedidos específicos está por confirmar.
 
 ### Retiro presencial
 
@@ -195,11 +195,15 @@ Todos los movimientos conservarán fecha, administrador, producto, cantidad y mo
 
 Los pedidos online reservarán inventario inmediatamente al crearse.
 
-La reserva tendrá una duración máxima de 24 horas.
+La reserva inicial expirará a los 20 minutos si el cliente no envía el comprobante de pago.
+
+Si los administradores rechazan un comprobante enviado, el cliente dispondrá de 15 minutos adicionales para corregirlo y volver a enviarlo. Este rechazo no libera inventario: inicia la ventana de corrección.
+
+El plazo máximo de 24 horas de la sección 14 corresponde a la gestión administrativa de los pedidos entrantes; no es la duración de la reserva de inventario.
 
 El inventario reservado no podrá venderse a otro cliente.
 
-Las reservas se liberarán al cancelar, rechazar o expirar un pedido, según corresponda.
+Las reservas se liberán al cancelar o expirar un pedido. Cuando la ventana de corrección venza sin un comprobante válido, la reserva expirará y las unidades volverán a estar disponibles.
 
 Las operaciones de reserva, venta y liberación deberán ser atómicas e idempotentes.
 
@@ -304,7 +308,7 @@ El panel permitirá configurar los horarios de atención y preparación.
 
 Los horarios informarán al cliente, pero no impedirán realizar pedidos fuera del horario habitual.
 
-Los administradores tendrán un máximo de 24 horas para gestionar las reservas y operaciones pendientes.
+Los administradores tendrán un máximo de 24 horas para gestionar los pedidos entrantes y las operaciones pendientes. Este plazo es operativo y no define la duración de la reserva de inventario (sección 8).
 
 ## 15. Panel administrativo
 

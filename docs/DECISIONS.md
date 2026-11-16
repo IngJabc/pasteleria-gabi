@@ -1,8 +1,10 @@
 # DECISIONS
 
-Key architectural decisions for Phase 0, in lightweight ADR form:
-*Context → Decision → Consequences*. Superseding a decision should be done by
-adding a new entry here (status: accepted, replaces #N).
+Key architectural decisions, in lightweight ADR form: *Context → Decision →
+Consequences*. Superseding a decision should be done by adding a new entry here
+(status: accepted, replaces #N). Entries #1–#11 were made in Phase 0; entries
+#12–#23 were made in Phase 1A (database & security design); entry #24 was made
+in Phase 1A.1 (reservation lifecycle correction).
 
 ---
 
@@ -147,3 +149,225 @@ project. Schema work starts in Phase 1 alongside RLS.
 **Consequences:** Infrastructure modules exist as tested seams (env + clients)
 but perform no I/O yet; catalog/inventory/payment tables are documented in
 `docs/ROADMAP.md` only.
+
+---
+
+## Phase 1A — database & security design decisions
+
+## 12. Schema conventions: identity columns, `text` + `CHECK` statuses, `numeric` money — status: accepted
+
+**Context:** First full schema proposal; conventions must be uniform and easy
+to evolve for an MVP with two administrators.
+
+**Decision:** `bigint generated always as identity` PKs (`uuid` only for
+`auth.users` links); statuses are `text` + `CHECK (col IN (…))` rather than
+Postgres enum types (adding a state is an idempotent constraint swap, not an
+`ALTER TYPE`); English `snake_case` stored values with UI translation to
+Spanish; all money in `numeric` (USD `numeric(10,2)`, VES `numeric(14,2)`,
+rate `numeric(12,4)`); `timestamptz` everywhere; every FK indexed; partial
+indexes for the pending-order/payment/cancellation queues.
+
+**Consequences:** Migration-friendly evolution; no float rounding bugs; status
+vocabulary is documented in one place (`DATABASE_DESIGN.md` §12). Trade-off:
+enum types would give stronger typing, at the cost of harder online changes —
+rejected for this scale.
+
+## 13. `administrators` table is the only authorization source; no role hierarchy — status: accepted
+
+**Context:** SPEC §16 forbids trusting `user_metadata`; SPEC §2 gives both
+admins identical permissions.
+
+**Decision:** Authorization = existence of an active `administrators` row for
+`auth.uid()`, checked per request by RLS through a `SECURITY DEFINER` helper
+(`private.is_admin()`, needed to avoid policy recursion). No `role` column
+(granular roles are not in the spec), no client-side writes to the table
+(provisioning is service-role only).
+
+**Consequences:** Deactivation takes effect immediately; forged metadata is
+irrelevant; adding roles later is an additive migration. Trade-off: every
+admin-gated table depends on one helper — acceptable, it is tiny and tested by
+the verification plan.
+
+## 14. No `customers` table — guest data is snapshotted on the order — status: accepted
+
+**Context:** SPEC mandates guest checkout (no accounts, no e-mail, only name +
+WhatsApp) and history that never drifts.
+
+**Decision:** `orders.customer_name` / `customer_phone` (plus address fields)
+hold exactly what the customer provided. No customer entity, no identity
+resolution by phone.
+
+**Consequences:** No CRM surface to secure, no PII table, order history is
+self-contained. Trade-off: no cross-order customer profile — SPEC never asks
+for one; a later feature can *derive* customers from orders without changing
+them.
+
+## 15. Cart is client state — no `carts` table — status: accepted
+
+**Context:** Checkout must revalidate prices and stock on the server anyway;
+SPEC defines no server-side cart.
+
+**Decision:** The cart lives in the browser and is submitted as
+`{product_id, quantity}[]`; the server reads prices from `products` and ignores
+anything else. No anonymous-writable table exists for a cart.
+
+**Consequences:** One less table + RLS surface + cleanup story; carts do not
+survive device switches (acceptable — never a spec requirement). Revisit only
+if abandoned-cart recovery becomes a requirement.
+
+## 16. One `orders` table for both channels (`channel = online | pos`) — status: accepted
+
+**Context:** SPEC §9 requires walk-in sales to be distinguishable from online
+orders but to share payments, inventory deductions and audit; POS is Phase 5.
+
+**Decision:** A `channel` column distinguishes them. POS rows have null
+customer/tracking/fulfillment (enforced by same-row CHECKs); online rows
+require customer data and a tracking token.
+
+**Consequences:** Payments, movements, refunds and the dashboard have a single
+spine — no duplicated `sales`/`sale_items` tables. Trade-off: some columns are
+channel-nullable; mitigated by CHECK constraints that make invalid shapes
+impossible.
+
+## 17. Tracking tokens are hashed; guests never touch tables — status: accepted
+
+**Context:** SPEC §7/§16: private tracking links, no customer exposure, no
+unauthorized modifications.
+
+**Decision:** Store `sha256(token)` only; the plaintext appears once in the
+creation URL. `anon` has **no policy** on orders/payments; the tracking page
+calls a server-side function (service role) that validates the token and
+returns a PII-free projection. The only guest write is inserting a *pending*
+cancellation request.
+
+**Consequences:** Database leaks cannot yield working links; enumeration is
+impossible; a leaked link exposes no customer PII. Trade-off: tracking is
+server-rendered only (no client-side Supabase queries on orders) — fine for the
+product.
+
+## 18. Inventory = batches + reservations + movements, with lazy reservation expiry — status: accepted
+
+**Context:** SPEC §8: FIFO, short customer-driven reservation deadlines
+(durations corrected in #24), atomic/idempotent operations — and the
+architecture forbids background workers (DECISIONS #1).
+
+**Decision:** Physical stock in `inventory_batches.remaining_quantity`; orders
+hold `inventory_reservations` per batch with `expires_at`; every change writes
+an append-only `inventory_movements` row. Expiry is evaluated lazily in the
+availability calculation (an expired reservation stops counting), with an
+opportunistic cleanup function — no scheduler.
+
+**Consequences:** Correct availability without workers or cron; FIFO and
+reservation logic live in RPC transactions. Trade-off: expired reservation
+rows linger until cleanup runs — harmless because they are excluded by query.
+
+## 19. Financial snapshots live inline on the order — no FK to `exchange_rates` — status: accepted
+
+**Context:** SPEC §4 requires each order to keep a historical photo of prices,
+totals, applied rate, rate time, VES total and rounding rule.
+
+**Decision:** Rate/total columns are copied onto `orders` at creation;
+`exchange_rates` stores fetched rates for lookup/fallback but is deliberately
+**not** referenced by FK from orders.
+
+**Consequences:** Order history survives any edit/pruning of rate rows (true
+snapshot semantics); queries need no join. Trade-off: rate rows and orders can
+diverge — irrelevant, since the snapshot is authoritative.
+
+## 20. Storage: public product images, service-role-only receipt uploads — status: accepted
+
+**Context:** SPEC §16 bucket visibility rules; guests have no auth identity to
+attribute an upload to.
+
+**Decision:** `product-images` (public read) written only by admins via
+policies; `payment-receipts` (private) is **never** writable by clients — the
+checkout server action validates the file and uploads with the service role,
+storing the path on `payments`. Admins read receipts through an `is_admin()`
+storage policy.
+
+**Consequences:** No unattributable anonymous writes to storage; receipt
+privacy holds under a private bucket. Trade-off: uploads for checkout must pass
+through server code (they already do — checkout is a server action).
+
+## 21. Append-only `audit_log` and `inventory_movements` at the policy level — status: accepted
+
+**Context:** SPEC §16 requires administrative audit trails that stay
+trustworthy.
+
+**Decision:** RLS grants these tables SELECT + INSERT (attributed to
+`auth.uid()` for audit) but **no UPDATE/DELETE policy** for any client role;
+the operational rule extends to the service role (server code never rewrites
+them).
+
+**Consequences:** A compromised admin session can add rows but not erase
+history. Trade-off: legitimate corrections must be new rows (compensating
+entries) — that is exactly what an audit trail should look like.
+
+## 22. `store_settings` singleton with `jsonb` placeholders for undefined shapes — status: accepted
+
+**Context:** SPEC needs pickup address, WhatsApp, hours and payment
+instructions, but three of those four structures are pending discovery
+(OQ-6, OQ-8, §19).
+
+**Decision:** One row (`CHECK (id = 1)`) with typed columns for what is defined
+(`pickup_address`, `whatsapp_phone`) and nullable `jsonb` columns
+(`business_hours`, `payment_instructions`) whose shape is explicitly deferred
+to the phase that implements them.
+
+**Consequences:** No invented structures to migrate away from later; the table
+is ready on day one. Trade-off: `jsonb` gives up column-level validation until
+the shape is defined — acceptable for two fields nothing reads yet. The table
+never stores secrets (it is publicly readable by design).
+
+## 23. State machines in the domain layer; the database constrains value domains only — status: accepted
+
+**Context:** SPEC §10/§16 requires server-validated transitions; two
+administrators and an MVP scale argue against heavyweight mechanisms.
+
+**Decision:** DB `CHECK` constraints fix the allowed status *values*; the
+allowed *transitions* (e.g. `pending → confirmed`, no jump to `completed`) are
+enforced by the server-side domain state machine — the only write paths that
+exist. No transition triggers or trigger-based validation tables.
+
+**Consequences:** One place to read and change transition rules (the domain),
+schema stays declarative. Trade-off: a future non-app writer (SQL console) could
+bypass transitions — acceptable because admins already have full data access,
+and every change still lands in the append-only audit log. Revisit if
+constraints-on-transitions become a compliance need.
+
+## 24. Reservation deadlines: 20-minute initial window + one 15-minute receipt-correction window — status: accepted (refines #18)
+
+**Context:** Phase 1A.1 corrected the reservation lifecycle against the
+confirmed business rules: (a) the initial inventory reservation expires after
+**20 minutes**; (b) if an administrator rejects a submitted payment receipt,
+the customer gets **one additional 15 minutes** to correct and resubmit it;
+(c) the **24-hour** figure (SPEC §14) is the administrators' operational
+deadline for managing incoming orders, **not** a reservation duration. Earlier
+documentation had repeated "24 h reservation" from an early SPEC reading, and
+the original SPEC text tied reservation release to "rejection", which would
+have released inventory before the correction window elapsed.
+
+**Decision:** `inventory_reservations` carries three time columns:
+`initial_expires_at` (`created_at + 20 min`, immutable),
+`correction_window_ends_at` (set **once** at rejection:
+`rejected_at + 15 min`), and a materialized nullable `expires_at` — the
+operative deadline, `NULL` meaning *held* (receipt awaiting verification, or
+secured after approval). Availability excludes only active reservations whose
+`expires_at` has passed (lazy expiry, as in #18 — still no workers). A
+rejected receipt never releases inventory: it only opens the bounded
+correction window; release happens solely on authorized cancellation,
+consumption on completion, expiry on deadline lapse. The window is granted at
+most once per reservation, so repeated rejection/resubmission cannot extend it
+indefinitely. The 24-hour admin deadline stays out of the schema entirely —
+it is a dashboard SLA computed from `orders.created_at`.
+
+**Consequences:** The schema distinguishes initial expiry from the correction
+window and the held state keeps the 15-minute window meaningful when
+verification is slow. Four open questions are recorded before Phase 3/4
+implementation (DATABASE_DESIGN §14): OQ-13 clock behavior for cash/quote
+orders, OQ-14 confirm the single-window repeat-rejection policy, OQ-15 confirm
+the hold-while-under-review rule, OQ-16 how (or whether) the 24-hour SLA is
+enforced. Trade-off: three deadline columns instead of one — accepted for
+audit clarity and indexed queries; all are written only by server-side RPCs.
+SPEC §8 and §14 were amended to match this decision (documentation-only
+correction, Phase 1A.1).

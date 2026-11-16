@@ -3,9 +3,11 @@
 Independent e-commerce platform for a Venezuelan bakery selling individual cake
 portions, with a private administrative panel for two administrators.
 
-**Status: Phase 0 complete — project initialization only.** No business features,
-database migrations or remote services are connected yet. The functional
-specification is [`SPEC.md`](./SPEC.md) (Spanish).
+**Status: Phase 1 in progress — M1 (catalog & administrative foundation)
+migration written and locally validated; not applied to any remote Supabase
+project** (the project does not exist yet — see [`TASKS.md`](./TASKS.md)).
+No business features are running; the pages are still placeholders. The
+functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
 
@@ -85,6 +87,8 @@ pasteleria-online/
 │   ├── validation/        # Zod input schemas (server-side authoritative)
 │   └── test/              # Shared testing utilities
 ├── public/                # Static assets
+├── supabase/
+│   └── migrations/        # SQL migrations (M1 written; never applied remotely yet)
 ├── .env.example           # Documented variable names, no real credentials
 ├── TASKS.md               # Phase checklist (done + next)
 └── SPEC.md                # Functional specification (Spanish)
@@ -110,5 +114,7 @@ build and render placeholder pages only — no database calls are made.
 | [`SPEC.md`](./SPEC.md) | Functional specification (source of truth, Spanish) |
 | [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phases and future requirements (documented, not implemented) |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Layers, folder responsibilities, security invariants |
+| [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | Proposed tables, columns, relationships, indexes, ER diagram (Phase 1A design) |
+| [`docs/SECURITY_DESIGN.md`](./docs/SECURITY_DESIGN.md) | Roles, access boundaries, proposed RLS and storage policies (Phase 1A design) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | Key architectural decisions and their rationale |
 | [`TASKS.md`](./TASKS.md) | Checklist of completed and upcoming tasks |

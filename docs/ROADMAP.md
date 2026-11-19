@@ -25,9 +25,9 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
 **Progress:** M1 (the first migration — catalog, settings, zones,
 administrators, audit + RLS/storage policies) is written in
-`supabase/migrations/` and validated locally; **it has not been applied
-anywhere** — applying it requires a Supabase project (TASKS B1). The remaining
-items below are not started.
+`supabase/migrations/001_catalog_and_admin_foundation.sql`, validated locally
+and **applied to the production Supabase project**. The catalog pages, admin
+auth and admin CRUD items below are not started.
 
 - Create the Supabase project; provision environment variables (no credentials
   in source code).
@@ -40,7 +40,16 @@ items below are not started.
   **in the database** (never from `user_metadata`); protected `/admin` shell.
 - Admin product management (CRUD) and private receipts bucket preparation.
 
-## Phase 2 — Inventory ⬜
+## Phase 2 — Inventory 🚧
+
+**Progress:** M2 — database foundation only — is implemented in
+`supabase/migrations/002_inventory_foundation.sql`: `inventory_batches`,
+`inventory_movements` (append-only, `order_id` deferred to M3 with `orders`),
+RLS, and the `create_inventory_batch` / `adjust_inventory` / `get_product_stock`
+RPCs, validated on a local PostgreSQL cluster (36 tests). **Not applied
+remotely yet.** Reservations (§6.2), checkout-time stock deduction, sale
+movements, timing (20 min / 15 min / 24 h) and the admin screens below remain
+to do.
 
 - Batches (product, initial/remaining quantity, production date, responsible
   admin), FIFO allocation, stock movements (entries, sales, adjustments) with

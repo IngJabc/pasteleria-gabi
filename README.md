@@ -3,11 +3,12 @@
 Independent e-commerce platform for a Venezuelan bakery selling individual cake
 portions, with a private administrative panel for two administrators.
 
-**Status: Phase 1 in progress — M1 (catalog & administrative foundation)
-migration written and locally validated; not applied to any remote Supabase
-project** (the project does not exist yet — see [`TASKS.md`](./TASKS.md)).
-No business features are running; the pages are still placeholders. The
-functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
+**Status: Phase 1 complete and applied to production — M2 (inventory
+foundation) implemented in `supabase/migrations/002_inventory_foundation.sql`
+and validated locally, not yet applied to any remote Supabase project** (see
+[`TASKS.md`](./TASKS.md)). No business features are running; the pages are
+still placeholders. The functional specification is [`SPEC.md`](./SPEC.md)
+(Spanish).
 
 ## Tech stack
 
@@ -88,7 +89,7 @@ pasteleria-online/
 │   └── test/              # Shared testing utilities
 ├── public/                # Static assets
 ├── supabase/
-│   └── migrations/        # SQL migrations (M1 written; never applied remotely yet)
+│   └── migrations/        # SQL migrations (M1 applied; M2 written, local only)
 ├── .env.example           # Documented variable names, no real credentials
 ├── TASKS.md               # Phase checklist (done + next)
 └── SPEC.md                # Functional specification (Spanish)

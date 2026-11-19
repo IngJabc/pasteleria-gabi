@@ -3,12 +3,18 @@
 Proposed initial database architecture for Pastelería Online (Phase 1A design).
 
 **Status:** M1 implemented in
-`supabase/migrations/20261114023000_m1_catalog_and_admin_foundation.sql` —
-the tables of §3–§5 and §10.2 plus the SPEC-confirmed seeds — validated by
-applying the file to a local PostgreSQL cluster with a Supabase stub (roles,
-`auth`, `storage`) and running behavioral RLS tests. **Not applied to any
-remote Supabase project; no project exists yet (TASKS B1).** Sections 6–11
-(inventory, orders, payments, …) remain design only. Every table below is a
+`supabase/migrations/001_catalog_and_admin_foundation.sql` (renamed from
+`20261114023000_m1_…` when the PR merged) — the tables of §3–§5 and §10.2 plus
+the SPEC-confirmed seeds — validated on a local PostgreSQL cluster with a
+Supabase stub (roles, `auth`, `storage`) and behavioral RLS tests, then
+**applied to the production Supabase project (local ↔ remote synchronized)**.
+M2 implemented in `supabase/migrations/002_inventory_foundation.sql` — §6.1
+(`inventory_batches`), §6.3 (`inventory_movements`, without `order_id`: deferred
+to M3 with `orders`) and the §11 functions `create_inventory_batch`,
+`adjust_inventory`, `get_product_stock` — same local validation, **not applied
+remotely yet**. §6.2 (`inventory_reservations`), sections 7–10 (orders,
+payments, …) and the §11 functions not named above remain design only. Every
+table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
 records an open question instead of inventing an answer.
@@ -372,7 +378,7 @@ responsible admin.
 | `type` | text | no | `CHECK (type IN ('entry','sale','adjustment'))` |
 | `quantity` | integer | no | **signed**: positive = increase, negative = decrease; `CHECK (quantity <> 0)`; `CHECK (type <> 'entry' OR quantity > 0)` |
 | `reason` | text | yes | `CHECK (type <> 'adjustment' OR reason IS NOT NULL)` — adjustments require a motive (SPEC §8) |
-| `order_id` | bigint | yes | FK `orders` on delete set null — links sale movements to their order |
+| `order_id` | bigint | yes | FK `orders` on delete set null — links sale movements to their order. **M3:** the column, FK and `inventory_movements_order_id_idx` are deliberately absent from migration `002` (no `orders` table yet) and are added together with `orders` |
 | `admin_id` | uuid | yes | FK `administrators` on delete set null — **null = system-initiated** (online sale/reservation consumption). See open question OQ-9 |
 | `created_at` | timestamptz | no | |
 
@@ -594,7 +600,7 @@ payment verifications, status changes, refunds, settings changes).
 | --- | --- | --- | --- |
 | `id` | bigint identity | no | PK |
 | `admin_id` | uuid | yes | FK `administrators` on delete set null; null = system/service-role action |
-| `action` | text | no | naming convention `domain.verb` (`product.update`, `payment.verify`, `inventory.adjust`, `order.status_change`, `refund.create`, `settings.update`) |
+| `action` | text | no | naming convention `domain.verb` (`product.update`, `payment.verify`, `inventory.batch_create`, `inventory.adjust`, `order.status_change`, `refund.create`, `settings.update`) |
 | `entity_type` | text | no | e.g. `order`, `payment`, `product` |
 | `entity_id` | text | no | text so any PK shape fits |
 | `data` | jsonb | yes | context: `{"before": …, "after": …}` as applicable |
@@ -611,11 +617,12 @@ No table duplicates another table's state. Everything derived is computed:
 
 | Name | Kind | Audience | Purpose |
 | --- | --- | --- | --- |
-| `get_product_stock(p_product_id)` | function | service role (server-rendered storefront) | available / reserved / remaining aggregates — keeps `production_date` away from the public entirely (SPEC §8) |
+| `create_inventory_batch(p_product_id, p_initial_quantity, p_production_date)` | function | authenticated admins (internal `is_admin()` check) | atomic **entry**: inserts the new batch (remaining = initial), its `entry` movement and the `inventory.batch_create` audit row in one transaction — implemented in migration 002 (Phase 2) |
+| `get_product_stock(p_product_id)` | function | service role (server-rendered storefront) | available / reserved / remaining aggregates — keeps `production_date` away from the public entirely (SPEC §8); implemented in migration 002 with `available = remaining` and `reserved = 0` until M3 introduces reservations |
 | `create_online_order(...)` | function | service role only | validates products/zones, recomputes all totals from `products`, allocates FIFO batches, writes snapshots + reservations (`expires_at = created_at + 20 min`), returns `{order_id, tracking_token}` once (Phase 3) |
 | `release_expired_reservations()` | function | service role only | lazy expiry cleanup: flips reservations past their operative deadline (20 min initial / 15 min correction window) to `expired` (Phase 3) |
 | `consume_order_reservations(p_order_id)` | function | service role only | converts reservations into `sale` movements on completion (Phase 2/3) |
-| `adjust_inventory(...)` | function | authenticated, internal `is_admin()` check | atomic entry/adjustment with movement row (Phase 2) |
+| `adjust_inventory(p_batch_id, p_quantity, p_reason)` | function | authenticated, internal `is_admin()` check | atomic signed **adjustment** with movement row: `FOR UPDATE` on the batch serialises concurrent callers, guards `remaining ∈ [0, initial]`, requires a reason — implemented in migration 002 (Phase 2) |
 | `get_order_for_tracking(p_token)` | function | service role only | hashes the token, looks up the order, returns a **PII-free projection** (status, items, totals, timestamps, cancellation state) — see SECURITY_DESIGN §6 |
 | `request_order_cancellation(p_token, p_reason)` | function | service role only | inserts a `cancellation_requests` row without touching the order (Phase 3) |
 | `order_payment_summary` | view (`security_invoker = true`) | authenticated admins (anon revoked) | per-order approved/pending/refunded totals for the dashboard |
@@ -668,7 +675,7 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-6 | Shape of Pago Móvil receiver data (SPEC §19) | `store_settings.payment_instructions` structure (Phase 4) |
 | OQ-7 | Allowed refund methods (SPEC §12 requires the field, not the value list) | `payment_refunds.method` CHECK (Phase 5) |
 | OQ-8 | Shape of attention/preparation schedules (SPEC §14) | `store_settings.business_hours` structure (Phase 6) |
-| OQ-9 | SPEC §8 says every movement keeps an "administrator", but automated online-sale movements have no acting admin — proposed: `admin_id` nullable with null = system | Confirm before Phase 2 migration |
+| OQ-9 | SPEC §8 says every movement keeps an "administrator", but automated online-sale movements have no acting admin — proposed: `admin_id` nullable with null = system | **Still open.** Migration 002 shipped the column nullable (design §6.3) but always writes an admin id; confirm before M3 introduces sale movements that could be null |
 | OQ-10 | Should the storefront display per-product stock (SPEC §3 lists "inventario disponible" ambiguously)? | Whether `get_product_stock` output is shown publicly (design supports it either way) |
 | OQ-11 | Are walk-in (POS) sales recorded without customer identity? Proposed: yes — all customer columns nullable for `channel = 'pos'` | Phase 5 |
 | OQ-12 | May a guest re-view their own uploaded receipt from the tracking page? Proposed: yes, via a short-lived signed URL issued by server code after token validation (no storage-policy change) | Phase 4 tracking/payment UI |

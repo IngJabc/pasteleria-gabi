@@ -178,13 +178,17 @@ OQ-16 how (or whether) the 24-hour admin SLA is enforced.
 
 ---
 
-## Phase 1B — Migrations, catalog and admin access ⬜
+## Phase 1B — Migrations, catalog and admin access 🚧
+
+**Progress:** M1 is implemented, validated and applied to production (see the
+implementation order below); the catalog pages, admin auth and admin CRUD
+items further down have not started.
 
 **Genuine blockers** (cannot be resolved by engineering work alone):
 
 | # | Blocker | Needed for | Owner |
 | --- | --- | --- | --- |
-| B1 | A Supabase project must exist and `.env.local` must be filled (account + credentials) | Applying *any* migration, generating types, auth | User / project owner |
+| B1 | ~~A Supabase project must exist and `.env.local` must be filled (account + credentials)~~ — **resolved: the project exists and M1 has been applied to it**; `.env.local` still needs filling for type generation/auth | Applying *any* migration, generating types, auth | User / project owner |
 | B2 | E-mail addresses of the two administrators (OQ-1 — not covered by SPEC) | Seeding `administrators` + creating auth accounts | Business owner |
 | B3 | Final catalog: product names, descriptions, prices, photographs (OQ-2, SPEC §19) | Seeding `products` (schema itself is *not* blocked) | Business owner |
 | B4 | Visual identity decision (SPEC §19) — only for final UI copy/branding, not for schema | Storefront presentation | Business owner |
@@ -204,13 +208,23 @@ Implementation order (each migration ships with its RLS policies; design source:
       RLS/forces + seeds (settings row + the three SPEC §6 zones, fees
       confirmed: free / $5 / manual quote) + `product-images` public bucket
       and its three admin write policies — implemented in
-      `supabase/migrations/20261114023000_m1_catalog_and_admin_foundation.sql`.
-      **Written and validated locally; NOT applied to any remote project**
-      (blocked on B1). Products and administrators are deliberately not
+      `supabase/migrations/001_catalog_and_admin_foundation.sql` (renamed from
+      `20261114023000_m1_…` when the PR merged).
+      **Applied to the production Supabase project (local ↔ remote
+      synchronized).** Products and administrators are deliberately not
       seeded (B2/B3 — no confirmed data).
-- [ ] **M2 (Phase 2):** `inventory_batches`, `inventory_movements` + RLS +
-      allocation/adjustment RPCs (OQ-9 confirmation before merge).
-      `inventory_reservations` is **not** here: its FK references `orders`.
+- [x] **M2 (Phase 2):** `inventory_batches`, `inventory_movements` + RLS +
+      entry/adjustment RPCs (`create_inventory_batch`, `adjust_inventory`,
+      `get_product_stock`) — implemented in
+      `supabase/migrations/002_inventory_foundation.sql`, validated on a
+      disposable local PostgreSQL cluster (behavioral + contract tests).
+      **Not applied to any remote project.** Scope notes: `order_id` and sale
+      movements are deferred to M3 (no `orders` table yet);
+      `inventory_reservations` and all timing logic (20 min / 15 min / 24 h)
+      are **not** here — the reservations FK references `orders`.
+      OQ-9 stays open — `inventory_movements.admin_id` is nullable per design
+      §6.3 but migration 002 always writes it (null = system semantics not
+      confirmed); no admin UI in M2.
 - [ ] **M3 (Phase 3):** `orders`, `order_items`, `inventory_reservations`,
       `cancellation_requests`, `exchange_rates` + tracking-token hashing +
       checkout/tracking RPCs (reservations created with
@@ -255,12 +269,64 @@ auth, torn down afterwards) with a stub of the Supabase environment (roles
       (trigger observed firing during the admin update test).
 
 Explicitly **not** verified locally (requires real Supabase infrastructure):
-public-bucket read via the Storage API/CDN, PostgREST exposure behavior,
-`auth.uid()` from real JWTs, and application of the migration to a remote
-project (blocked on B1 — **no remote changes were made**).
+public-bucket read via the Storage API/CDN, PostgREST exposure behavior, and
+`auth.uid()` from real JWTs. Remote application was deferred at the time (B1);
+M1 has since been applied to the production project — **no remote changes were
+made by this M2 task**.
 
 npm suite (Phase 1B): `npm test` 6/6 passed · `npm run lint` exit 0 ·
 `npm run build` success (`/`, `/admin` static) · `npx tsc --noEmit` exit 0.
+
+Validation (Phase 2 / M2 — executed locally, 2026-11-19):
+
+The Supabase CLI/Docker remain unavailable, so migration 002 was validated the
+same way as M1: applied to a **throwaway local PostgreSQL 17 cluster** (temp
+directory, ephemeral loopback port, trust auth, torn down afterwards) with the
+Supabase stub, via `src/infrastructure/database/local-postgres.ts` (the suite
+skips itself with `describe.skipIf` when no local PostgreSQL is found; set
+`PGBIN` to override the binary path):
+
+- [x] Migrations 001 + 002 apply cleanly in a single transaction each
+      (`psql -1 -v ON_ERROR_STOP=1` → exit 0).
+- [x] Both M2 tables: RLS enabled **and** forced; exactly 3 policies (admin
+      ALL on batches, SELECT + INSERT on movements, no anon policy, append-only
+      — no UPDATE/DELETE policy, DECISIONS #21).
+- [x] Initial creation: batch + `entry` movement + `inventory.batch_create`
+      audit row in one transaction; replenishment = second batch, FIFO order by
+      (`production_date`, `id`).
+- [x] Stock reduction: signed adjustment with mandatory reason, returns new
+      remaining, writes movement + audit (`remaining_before/after` in jsonb).
+- [x] Insufficient stock rejected atomically (no movement, no audit, remaining
+      unchanged); negative and over-initial results blocked both by RPC guards
+      and by the named CHECK constraints (backstop verified with direct SQL).
+- [x] Invalid input (null ids, non-positive initial quantity, zero/null
+      adjustment, blank reason) rejected before any write.
+- [x] Authorization boundaries: anon = 0 rows, writes denied, RPCs "permission
+      denied"; authenticated non-admin = 0 rows, RPC gate error 42501; both
+      admins read/write, history never rewritable (UPDATE/DELETE affect 0
+      rows); service role limited to its documented surface.
+- [x] EXECUTE grants exactly per SECURITY_DESIGN §5 (`create`/`adjust` →
+      `authenticated` only; `get_product_stock` → `service_role` only) and all
+      functions are `SECURITY INVOKER` with `search_path = ''`.
+- [x] Concurrency: two sessions racing the same batch — the second waits on
+      the `FOR UPDATE` lock, then fails with "insufficient stock"; exactly one
+      movement and one audit row result (no double-spend).
+- [x] M3 leakage absent: no `inventory_reservations`, no `order_id`/FK/index,
+      no `orders`, no `sale` rows, no timing expressions (`interval '15/20'`),
+      no seeds; `admin_id` always written (OQ-9 stays open).
+- [x] `get_product_stock` returns `available = remaining`, `reserved = 0`
+      (placeholder until M3) and never exposes `production_date`.
+- [x] Cross-table invariant sweep: signed movement sum per batch =
+      `remaining_quantity` for every batch.
+
+npm suite (Phase 2 / M2): `npm test` 36/36 passed (3 files: 20 behavioral +
+16 static contract) · `npm run lint` exit 0 · `npm run build` success
+(`/`, `/admin` static) · `npx tsc --noEmit` exit 0 (run after build).
+
+Explicitly **not** verified locally (requires real Supabase infrastructure):
+PostgREST exposure of the new RPCs, `auth.uid()` from real JWTs, and applying
+migration 002 to the remote project (deliberately deferred — **no remote
+changes were made**).
 
 Then, per roadmap phase:
 

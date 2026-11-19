@@ -5,12 +5,19 @@ Roles, access boundaries and proposed RLS policies for Pastelería Online
 
 **Status:** the M1 subset (§3 authorization helper, §4 policies for the six M1
 tables, §7 `product-images` bucket) is implemented in
-`supabase/migrations/20261114023000_m1_catalog_and_admin_foundation.sql` and
-was verified behaviorally on a local PostgreSQL cluster with a Supabase stub
-(anon/authenticated/service_role, `auth.uid()`, `storage.objects`) — including
-the non-admin, self-attribution, append-only and no-self-granting cases.
-**Nothing has been applied to a remote Supabase project; no project exists yet
-(TASKS B1).** Policies for M2+ migrations remain proposals, derived from [`SPEC.md`](../SPEC.md) §16 and the invariants in
+`supabase/migrations/001_catalog_and_admin_foundation.sql` (renamed from
+`20261114023000_m1_…` when the PR merged) and was verified behaviorally on a
+local PostgreSQL cluster with a Supabase stub (anon/authenticated/service_role,
+`auth.uid()`, `storage.objects`) — including the non-admin, self-attribution,
+append-only and no-self-granting cases. **M1 has been applied to the production
+Supabase project (local ↔ remote synchronized).** The M2 subset (§4.1
+`inventory_batches`/`inventory_movements` rows, §4.2 append-only inventory
+policies, §5 `create_inventory_batch`/`adjust_inventory`/`get_product_stock`
+grants) is implemented in `supabase/migrations/002_inventory_foundation.sql`
+with the same local verification (including anon/non-admin/service-role
+boundaries and the concurrency lock); **not applied remotely yet.** Policies
+for M3+ migrations remain proposals, derived from [`SPEC.md`](../SPEC.md) §16
+and the invariants in
 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) §5. Table/column definitions live in
 [`DATABASE_DESIGN.md`](./DATABASE_DESIGN.md).
 
@@ -98,10 +105,12 @@ standard fix: a `SECURITY DEFINER` helper that reads the table as its owner:
 
 ## 4. RLS policies (proposed)
 
-> Proposed for a later migration — nothing below has been applied. Convention:
-> policies specify `TO anon` / `TO authenticated` explicitly (never the
-> deprecated `auth.role()`), wrap identity lookups as `(select …)`, and every
-> `UPDATE` policy carries both `USING` and `WITH CHECK`.
+> **Status:** the M1 policies (six catalog/settings/zone tables, storage) are
+> applied in migration `001` and the M2 inventory policies in `002`; rows marked
+> M3+ remain proposals for a later migration. Convention: policies specify
+> `TO anon` / `TO authenticated` explicitly (never the deprecated
+> `auth.role()`), wrap identity lookups as `(select …)`, and every `UPDATE`
+> policy carries both `USING` and `WITH CHECK`.
 
 ### 4.1 Access matrix
 
@@ -216,7 +225,7 @@ Anti-patterns deliberately avoided:
 | --- | --- | --- |
 | `private.is_admin()` | `authenticated`, `anon` (policy evaluation only; not in an exposed schema) | boolean about the caller only |
 | `create_online_order`, `release_expired_reservations`, `consume_order_reservations`, `get_product_stock`, `get_order_for_tracking`, `request_order_cancellation` | **service role only** (`revoke … from public, anon, authenticated`) | called from Next.js server code; guests never call PostgREST directly |
-| `adjust_inventory` (Phase 2) | `authenticated` only, with an internal `is_admin()` check in the body | admin panel needs it with the caller's `auth.uid()` for attribution |
+| `adjust_inventory`, `create_inventory_batch` (Phase 2 — implemented in migration 002) | `authenticated` only (`revoke … from public, anon, service_role`), with an internal `is_admin()` check in the body | admin panel needs them with the caller's `auth.uid()` for attribution |
 | `order_payment_summary` view | `SELECT` for `authenticated`, revoked from `anon` | dashboard aggregation |
 
 Rules for every function (design-level):

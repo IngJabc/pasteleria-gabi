@@ -4,11 +4,24 @@ Independent e-commerce platform for a Venezuelan bakery selling individual cake
 portions, with a private administrative panel for two administrators.
 
 **Status: Phase 1 complete and applied to production — M2 (inventory
-foundation) implemented in `supabase/migrations/002_inventory_foundation.sql`
-and validated locally, not yet applied to any remote Supabase project** (see
-[`TASKS.md`](./TASKS.md)). No business features are running; the pages are
-still placeholders. The functional specification is [`SPEC.md`](./SPEC.md)
-(Spanish).
+foundation), M3 (orders & inventory reservations, including the in-place
+reservation/payment-attempt correction) and the Phase 4 OQ-17 quote-acceptance
+transition implemented in `supabase/migrations/002_inventory_foundation.sql`,
+`supabase/migrations/003_orders_and_reservations.sql` and
+`supabase/migrations/004_quote_acceptance.sql` and validated locally
+(109 tests), not yet applied to any remote Supabase project** (see
+[`TASKS.md`](./TASKS.md)). M3 reserves stock for 20 minutes, holds it while a
+submitted receipt is reviewed, allows at most two receipts with one 20-minute
+correction window, and auto-cancels on the second rejection. The final open
+questions are resolved in [`docs/DECISIONS.md`](./docs/DECISIONS.md) (#25/#26):
+the 24-hour review SLA only triggers deduplicated administrator notifications
+(no auto-cancel/release) and remains **pending in Phase 6**, while explicit
+acceptance of a manual delivery quote **is implemented in Phase 4**: a
+private-token, service-role RPC writes one fixed 20-minute window in
+`quote_acceptance_expires_at` and copies it to `expires_at`, leaving the
+historical `initial_expires_at` immutable. Migration 004 has not been applied
+remotely. No business features are running; the pages are still placeholders.
+The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
 
@@ -20,7 +33,9 @@ still placeholders. The functional specification is [`SPEC.md`](./SPEC.md)
 - Deployed on Vercel
 
 Architecture: **modular monolith** — no Express, Strapi, microservices or
-background workers. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+background workers. The pending recurring SLA notifications will require a
+future scheduler decision (see DECISIONS #25). See
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -89,7 +104,7 @@ pasteleria-online/
 │   └── test/              # Shared testing utilities
 ├── public/                # Static assets
 ├── supabase/
-│   └── migrations/        # SQL migrations (M1 applied; M2 written, local only)
+│   └── migrations/        # SQL migrations (M1 applied remotely; M2 + M3 + M4/OQ-17 local only)
 ├── .env.example           # Documented variable names, no real credentials
 ├── TASKS.md               # Phase checklist (done + next)
 └── SPEC.md                # Functional specification (Spanish)
@@ -113,9 +128,9 @@ build and render placeholder pages only — no database calls are made.
 | Document | Contents |
 | --- | --- |
 | [`SPEC.md`](./SPEC.md) | Functional specification (source of truth, Spanish) |
-| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phases and future requirements (documented, not implemented) |
+| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phases and future requirements (OQ-17 implemented locally in Phase 4; OQ-16 pending in Phase 6) |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Layers, folder responsibilities, security invariants |
-| [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | Proposed tables, columns, relationships, indexes, ER diagram (Phase 1A design) |
-| [`docs/SECURITY_DESIGN.md`](./docs/SECURITY_DESIGN.md) | Roles, access boundaries, proposed RLS and storage policies (Phase 1A design) |
+| [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | Tables, columns, relationships, indexes, ER diagram (design; M1–M3 + M4/OQ-17 implemented) |
+| [`docs/SECURITY_DESIGN.md`](./docs/SECURITY_DESIGN.md) | Roles, access boundaries, RLS/storage policies and OQ-17 token authorization (design; M1–M4 implemented) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | Key architectural decisions and their rationale |
 | [`TASKS.md`](./TASKS.md) | Checklist of completed and upcoming tasks |

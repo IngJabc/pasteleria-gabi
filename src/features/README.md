@@ -6,14 +6,16 @@ it may freely use `src/domain` and `src/infrastructure`. Features must not reach
 into each other's internals — shared behavior belongs in `src/domain`,
 `src/components` or `src/infrastructure`.
 
-Planned modules (documented in `docs/ROADMAP.md`, **not implemented yet**):
+Planned modules (documented in `docs/ROADMAP.md`). Only `orders/` exists today,
+and it contains the OQ-17 quote-acceptance server action; no feature UI exists
+yet:
 
 | Folder | Capability |
 | --- | --- |
 | `catalog/` | Product listing, product detail, admin product management. |
 | `cart/` | Client-side cart state for the storefront. |
 | `checkout/` | Guest checkout: customer data, delivery/pickup, server-side recalculation. |
-| `orders/` | Online orders, private tracking links (SPEC §7). |
+| `orders/` | **Partial:** quote acceptance by private tracking token (OQ-17); full online-order/tracking UI still planned (SPEC §7). |
 | `payments/` | Pago Móvil receipts, manual verification, combined payments (SPEC §5). |
 | `inventory/` | Batches, movements, reservations, FIFO allocation (SPEC §8). |
 | `pos/` | Walk-in sales and external payments registered from the panel (SPEC §9). |

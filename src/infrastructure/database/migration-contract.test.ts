@@ -36,6 +36,8 @@ describe("migration 002 contract (static)", () => {
     expect(migrations).toEqual([
       "001_catalog_and_admin_foundation.sql",
       "002_inventory_foundation.sql",
+      "003_orders_and_reservations.sql",
+      "004_quote_acceptance.sql",
     ]);
   });
 

@@ -26,7 +26,10 @@ boundaries, concurrent checkout/consume); **not applied remotely yet.** The
 Phase 4 / M4 subset (§5 service-role RPCs, §6 token-based quote acceptance and
 extended PII-free tracking projection, §8 invariant) is implemented in
 `supabase/migrations/004_quote_acceptance.sql` with local validation; **not
-applied remotely**. OQ-16 notifications remain unimplemented (Phase 6).
+applied remotely**. The Phase 6 / M6 OQ-16 subset is implemented in
+`supabase/migrations/005_receipt_sla_notifications.sql` plus the narrow
+`supabase/worker/sla-worker.mjs` (local validation, 143 tests; **not applied
+remotely or deployed**).
 Policies for M4+ migrations remain proposals, derived from
 [`SPEC.md`](../SPEC.md) §16
 and the invariants in
@@ -240,6 +243,7 @@ Anti-patterns deliberately avoided:
 | `create_online_order`, `hold_order_reservations`, `open_order_correction_window`, `release_expired_reservations`, `consume_order_reservations`, `release_order_reservations`, `get_order_for_tracking`, `request_order_cancellation` (Phase 3 — implemented in migration 003), plus `get_product_stock` | **service role only** (`revoke … from public, anon, authenticated`) | called from Next.js server code; guests never call PostgREST directly |
 | `accept_quote_fee`, `accept_quote_fee_for_tracking`, and the replaced `get_order_for_tracking` (Phase 4 — implemented in migration 004) | **service role only** (explicit `revoke … from public, anon, authenticated`; `SECURITY INVOKER`, `search_path = ''`) | quote acceptance is dispatched only from the server action after token validation; `accept_quote_fee` is an internal primitive (no customer authorization by order id) |
 | `adjust_inventory`, `create_inventory_batch` (Phase 2 — implemented in migration 002) | `authenticated` only (`revoke … from public, anon, service_role`), with an internal `is_admin()` check in the body | admin panel needs them with the caller's `auth.uid()` for attribution |
+| `process_sla_notifications`, `approve_receipt_submission` and `private.close_pending_receipt_submission` (Phase 6 — implemented in migration 005) | **service role only** (explicit `revoke … from public, anon, authenticated`; `VOLATILE`, `SECURITY INVOKER`, `search_path = ''`) | only the dedicated SLA worker or server-side review flow may close SLA state; clients have no RPC path |
 | `order_payment_summary` view | `SELECT` for `authenticated`, revoked from `anon` | dashboard aggregation |
 
 Rules for every function (design-level):
@@ -254,6 +258,15 @@ Rules for every function (design-level):
 - Mutating functions validate their inputs against the database (prices from
   `products`, availability from batches), never from arguments the client
   supplies for money/status fields.
+
+**OQ-16 worker credential:** `supabase/worker/sla-worker.mjs` reads the same
+`NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as
+`src/infrastructure/supabase/admin.ts` and uses the same `@supabase/supabase-js`
+client options (`persistSession: false`, `autoRefreshToken: false`). It does
+**not** import `server-only`/`env.server.ts` (they throw outside Next.js) and
+does **not** construct a PostgreSQL connection string: the service-role key is
+used only as an HTTP API credential for the single allow-listed RPC. Structure
+logs never include recipient/customer PII.
 
 ## 6. Guest order tracking (private links)
 
@@ -362,8 +375,8 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 | Two receipts total (original + one correction) | `orders.receipt_attempts INTEGER NOT NULL DEFAULT 0 CHECK (0..2)` is written only by the service-role `hold_order_reservations` (atomic guarded increment; a third submission raises P0001). Clients cannot write `orders`, and a repeated hold on an already-held order consumes no attempt |
 | Quote-pending inventory stays reserved (OQ-13 / OQ-17 resolved and implemented in migration 004) | `create_online_order` creates manual-quote deliveries with `expires_at = NULL` (held), so no deadline can lapse while the quote is pending; clients cannot write a deadline. The customer's explicit acceptance of the quoted fee starts the new fixed 20-minute window (DECISIONS #26), written **once** in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; the historical `initial_expires_at` is **immutable** and is never re-armed or rewritten. Administrative retries do not extend the new window, and neither the 24-hour SLA nor the correction window is modified (the correction window keeps precedence in the `expires_at` invariant) |
 | Quote acceptance is authorized only by the private tracking token (OQ-17, migration 004) | The server action accepts only a 64-hex token and calls the service-role-only `accept_quote_fee_for_tracking`, which resolves `sha256(token)` to an order on the server; `accept_quote_fee(p_order_id)` is an internal primitive, **not** customer authorization by order id. Both RPCs lock reservations → orders, are idempotent, never revive closed reservations, and audit `order.quote_accept` in the same transaction with `admin_id = NULL` and no token/PII in the payload |
-| 24-hour review SLA is informational (OQ-16 resolved) | Exceeding the review deadline only dispatches notifications to the responsible administrator (every 15 min until approve/reject). No client or worker path may cancel the order, expire it, release reservations, move `expires_at`, or write an inventory movement because of the SLA (DECISIONS #25, **pending implementation**) |
-| Recurring SLA notifications are idempotent | Overlapping worker executions must be deduplicated with a stable key (receipt/submission + due interval + recipient) so the same reminder is never sent twice; the notification path has no write access to orders or inventory state beyond its own dispatch record |
+| 24-hour review SLA is informational (OQ-16 resolved and implemented) | Exceeding the deadline only creates durable in-app notification rows for **every active** administrator (every 15 min until that submission is approved/rejected). No client or worker path may cancel the order, expire it, release reservations, move `expires_at`, change payment state, or write an inventory movement because of the SLA. `process_sla_notifications` has exactly one write target: `admin_notifications` (DECISIONS #25, migration 005) |
+| Recurring SLA notifications are idempotent | `UNIQUE (receipt_submission_id, admin_id, interval_bucket)` plus `ON CONFLICT DO NOTHING` deduplicates overlapping worker executions and prevents one administrator from suppressing another. `CROSS JOIN` fans out over active administrators; delayed runs insert only the current bucket (no historical burst). No client INSERT/DELETE policy exists; admins can only read and mark read their own rows. All SLA RPCs are `service_role`-only, `SECURITY INVOKER`, `VOLATILE` with pinned `search_path` |
 | Client-sent payment status ignored | `payments` writable only by admins; checkout server code inserts `status = 'pending'` itself; verification transitions only through admin domain code |
 | Legal order/payment state transitions | Domain-layer state machine (server-side) + DB `CHECK` on value domains; no client write path exists to bypass it |
 | Duplicate payments / orders | `payments.idempotency_key` UNIQUE; `cancellation_requests` partial UNIQUE (one open request); reservation/allocation RPCs idempotent by design (SPEC §16) |

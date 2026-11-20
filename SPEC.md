@@ -199,7 +199,7 @@ La reserva inicial expirará a los 20 minutos si el cliente no envía el comprob
 
 Si los administradores rechazan un comprobante enviado, el cliente dispondrá de 20 minutos adicionales para corregirlo y volver a enviarlo. Este rechazo no libera inventario: inicia la única ventana de corrección. Se permiten como máximo dos comprobantes en total (el original y una corrección); el primer rechazo mantiene la reserva retenida durante la revisión, y el segundo rechazo cancela automáticamente el pedido y libera sus reservas.
 
-El plazo máximo de 24 horas de la sección 14 corresponde a la revisión administrativa del comprobante; no es la duración de la reserva de inventario. Al superarse, se notifica al administrador responsable cada 15 minutos hasta que apruebe o rechace el comprobante (OQ-16, resuelto; implementación pendiente en la Fase 6). El vencimiento de ese plazo no cancela el pedido ni libera inventario, y no sustituye ni modifica los plazos de reserva de 20 minutos descritos en esta sección. Los reintentos administrativos no extienden ninguno de estos plazos.
+El plazo máximo de 24 horas de la sección 14 corresponde a la revisión administrativa del comprobante; no es la duración de la reserva de inventario. Cada comprobante enviado inicia su propio plazo (el original y su corrección tienen relojes independientes). Al superarse, se notifica a todos los administradores activos cada 15 minutos hasta que ese comprobante sea aprobado o rechazado (OQ-16, resuelto e implementado localmente en la Fase 6 mediante la migración 005 y un worker dedicado; no aplicado remotamente ni desplegado). El vencimiento de ese plazo no cancela el pedido ni libera inventario, y no sustituye ni modifica los plazos de reserva de 20 minutos descritos en esta sección. Los reintentos administrativos no extienden ninguno de estos plazos.
 
 El inventario reservado no podrá venderse a otro cliente.
 
@@ -297,7 +297,7 @@ Se utilizará Supabase Realtime para notificar a ambos administradores cuando:
 - Se cree un pedido online.
 - Se envíe un comprobante.
 - Se produzcan actualizaciones relevantes de pedidos y pagos.
-- Se supere el plazo de 24 horas de revisión de un comprobante (sección 14): se notificará al administrador responsable y se repetirá cada 15 minutos hasta que apruebe o rechace el comprobante, sin cancelar el pedido ni liberar inventario. Ejecuciones simultáneas del proceso de notificación no deben generar avisos duplicados para el mismo vencimiento.
+- Se supere el plazo de 24 horas de revisión de un comprobante (sección 14): se notificará a todos los administradores activos y se repetirá cada 15 minutos hasta que ese comprobante sea aprobado o rechazado, sin cancelar el pedido ni liberar inventario. Ejecuciones simultáneas del proceso de notificación no deben generar avisos duplicados para el mismo comprobante e intervalo.
 
 Las notificaciones serán informativas. La fuente de verdad siempre será la base de datos.
 
@@ -309,7 +309,7 @@ El panel permitirá configurar los horarios de atención y preparación.
 
 Los horarios informarán al cliente, pero no impedirán realizar pedidos fuera del horario habitual.
 
-Los administradores tendrán un máximo de 24 horas desde el envío de un comprobante para revisarlo. Este plazo es operativo y no define la duración de la reserva de inventario (sección 8). Al superarse se notificará al administrador responsable cada 15 minutos hasta que apruebe o rechace el comprobante; no se cancelará el pedido ni se liberará inventario por el vencimiento de este plazo administrativo.
+Los administradores tendrán un máximo de 24 horas desde el envío de un comprobante para revisarlo. Este plazo es operativo y no define la duración de la reserva de inventario (sección 8). Al superarse se notificará a todos los administradores activos cada 15 minutos hasta que ese comprobante sea aprobado o rechazado; no se cancelará el pedido ni se liberará inventario por el vencimiento de este plazo administrativo.
 
 ## 15. Panel administrativo
 

@@ -2,9 +2,12 @@
 
 Pastelería Online is a **modular monolith**: a single Next.js application
 (App Router) deployed on Vercel, backed by Supabase (PostgreSQL, Auth, Storage,
-Realtime). There is no separate backend service, no Express/Strapi, and no
-background workers — SPEC §17 requires no additional infrastructure without a
-concrete need.
+Realtime). There is no separate backend service and no Express/Strapi — SPEC
+§17 requires no additional infrastructure without a concrete need. The one
+exception is the narrow OQ-16 receipt-SLA worker
+(`supabase/worker/sla-worker.mjs`): a scheduled Node process authorized only by
+the amendment to DECISIONS #1, calling one service-role RPC with no business
+state writes. It is not a second deployable/service.
 
 The functional source of truth is [`SPEC.md`](../SPEC.md). This document covers
 technical structure and invariants.

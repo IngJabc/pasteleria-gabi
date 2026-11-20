@@ -5,10 +5,13 @@ Consequences*. Superseding a decision should be done by adding a new entry here
 (status: accepted, replaces #N). Entries #1–#11 were made in Phase 0; entries
 #12–#23 were made in Phase 1A (database & security design); entry #24 was made
 in Phase 1A.1 (reservation lifecycle correction); entries #25–#26 resolve the
-final M3 open questions OQ-16 and OQ-17. #25 remains documentation-only
-(implementation pending in Phase 6); #26 is implemented in Phase 4 by
+final M3 open questions OQ-16 and OQ-17. #25 is implemented by
+`supabase/migrations/005_receipt_sla_notifications.sql` plus the narrow
+service-role worker in `supabase/worker/sla-worker.mjs` (validated locally,
+not applied remotely or deployed); #26 is implemented in Phase 4 by
 `supabase/migrations/004_quote_acceptance.sql` (validated locally, not applied
-remotely).
+remotely). The no-worker scope of #1 is amended **only for OQ-16** as recorded
+below.
 
 ---
 
@@ -25,6 +28,17 @@ this phase.
 **Consequences:** One deployable, one type system, minimal ops. Heavy async work
 later (e.g. rate refresh jobs) would force a re-evaluation — recorded as a
 future decision, not pre-built.
+
+**Amendment (OQ-16 only, 2026-11-20):** The "no background workers" rule is
+narrowly revised to authorize **one dedicated, lightweight Node.js scheduled
+worker** whose sole responsibility is the 24-hour receipt-review SLA of #25.
+It calls exactly one service-role RPC, has no business-state write path, uses
+the existing Supabase service-role environment, and runs on a 15-minute poll
+with an immediate first cycle. It is a backend scheduling component, not a new
+service/microservice, and this amendment does **not** authorize workers for BC
+rates, e-mail digesting, outbox delivery, inventory expiry or any other
+feature. All other work listed under "Later / not scheduled" in the roadmap is
+unchanged.
 
 ## 2. Scaffold with `create-next-app` (Next.js 16.4.6) — status: accepted
 
@@ -253,7 +267,8 @@ product.
 
 **Context:** SPEC §8: FIFO, short customer-driven reservation deadlines
 (durations corrected in #24), atomic/idempotent operations — and the
-architecture forbids background workers (DECISIONS #1).
+architecture forbids background workers (DECISIONS #1; the OQ-16-only
+amendment does not authorize an inventory-expiry worker).
 
 **Decision:** Physical stock in `inventory_batches.remaining_quantity`; orders
 hold `inventory_reservations` per batch with `expires_at`; every change writes
@@ -422,11 +437,20 @@ key). This decision does not select the scheduler mechanism.
 reservation clock and of the 20-minute correction window; all three can run
 without interfering. The existing #24 schema does not gain an SLA column or an
 automatic branch; #18's lazy expiry remains the only inventory-deadline
-mechanism. Implementation is **pending** (Phase 6): it needs a scheduled
-notification mechanism (revisiting the "no background workers" scope of #1),
-a way to identify the responsible administrator, deduplicated dispatch, and
-tests for overlap/no-cancel behavior. No SQL, migration or application change
-is part of this documentation-only decision.
+mechanism. **Final architecture (implemented in Phase 6):** a dedicated
+scheduled worker (authorized by the amendment to #1) calls a single
+service-role RPC that inserts durable in-app notifications. Because both
+administrators are responsible for receipt review, the RPC fans out to every
+**active** `administrators` row rather than guessing one owner. One immutable
+`receipt_submissions` row is created by the real receipt-submission RPC for
+each actual attempt (original and correction), and approval/rejection closes
+the pending row in the same transaction as the review action. Idempotency is
+enforced in the database by `UNIQUE (receipt_submission_id, admin_id,
+interval_bucket)` with `ON CONFLICT DO NOTHING`; a delayed run creates only the
+**current** 15-minute bucket and never replays missed intervals. No external
+provider/outbox is introduced — the in-app inbox is the delivery. Migration
+005 and `supabase/worker/sla-worker.mjs` are validated locally only; they have
+**not** been applied remotely or deployed.
 
 ## 26. Manual delivery quote: acceptance starts a new 20-minute reservation — status: accepted (resolves OQ-17)
 
@@ -470,5 +494,5 @@ reservations → orders, is idempotent, never revives closed reservations and
 writes one PII-free `order.quote_accept` audit row in the same transaction. The server action
 `src/features/orders/accept-quote.ts` validates a 64-hex token and calls only
 that RPC. Validated locally (`npm test`, lint, `tsc`, build; 109 tests);
-migration 004 has **not** been applied remotely and OQ-16 remains pending
-Phase 6.
+migration 004 has **not** been applied remotely. OQ-16 is implemented
+separately by migration 005 and the narrow worker described in #25.

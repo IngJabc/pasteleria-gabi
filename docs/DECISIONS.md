@@ -10,8 +10,12 @@ final M3 open questions OQ-16 and OQ-17. #25 is implemented by
 service-role worker in `supabase/worker/sla-worker.mjs` (validated locally,
 not applied remotely or deployed); #26 is implemented in Phase 4 by
 `supabase/migrations/004_quote_acceptance.sql` (validated locally, not applied
-remotely). The no-worker scope of #1 is amended **only for OQ-16** as recorded
-below.
+remotely). Decisions #27–#32 record the Payments Module backend added in
+`supabase/migrations/006_payments_and_verification.sql` (local-only; behaviorally
+validated on a disposable local PostgreSQL cluster — details in the final
+implementation report; not applied remotely, deployed, committed or pushed).
+Historical docs call this scope "Phase 4", tasking calls it "Phase 5". The
+no-worker scope of #1 is amended **only for OQ-16** as recorded below.
 
 ---
 
@@ -496,3 +500,111 @@ writes one PII-free `order.quote_accept` audit row in the same transaction. The 
 that RPC. Validated locally (`npm test`, lint, `tsc`, build; 109 tests);
 migration 004 has **not** been applied remotely. OQ-16 is implemented
 separately by migration 005 and the narrow worker described in #25.
+
+---
+
+## Payments Module decisions (migration 006, local only)
+
+## 27. One payment spine with explicit evidence linkage — status: accepted
+
+**Context:** SPEC §5/§10/§12 need several payment components per order,
+receipts as evidence, and separate refund history; migration 005 already owns
+receipt-review/SLA history (#25).
+
+**Decision:** `public.payments` is the single financial history and
+`public.payment_refunds` is its append-only refund trail.
+`receipt_submissions.payment_id` (migration 006) explicitly links each OQ-16
+review/SLA row to the **one** payment component it evidences. Partial unique
+indexes allow at most one pending submission per order and per payment; there is
+no competing payment ledger. Cash creates no submission and never increments
+`orders.receipt_attempts`.
+
+**Consequences:** Review status and financial status can be read independently
+but stay joinable. The existing M3/M5 two-receipt cap still applies, so only two
+digital evidence submissions can exist per order. Refines #20 and #25; no
+behavioral change to those migrations.
+
+## 28. Two Binance modalities, both USDT — status: accepted
+
+**Context:** SPEC §5 names Binance Pay and user-to-user transfers; older notes
+used a single `binance` shorthand. No third method or currency is defined.
+
+**Decision:** Stored method/currency pairs are EXACTLY `pago_movil`→VES,
+`cash_usd`→USD, `binance_pay`→USDT and `binance_transfer`→USDT, enforced by a
+migration 006 CHECK. The two Binance values are the two modalities already in
+SPEC §5 and DATABASE_DESIGN §8.1.
+
+**Consequences:** No invented method or currency. The specific Binance
+identifier/receipt data remains an open discovery item (SPEC §19); no format is
+assumed. Adds no cross-currency meaning to USDT (see #29).
+
+## 29. Declared amounts only; no invented conversion — status: accepted
+
+**Context:** SPEC §4 requires an inline BCV snapshot, but OQ-4 (rate write path)
+and OQ-5 (rounding rule) are still open; payment components may be in VES, USD
+or USDT.
+
+**Decision:** `get_order_payment_summary` reports approved/pending/in_review/
+rejected/refunded amounts and payment counts **per currency**. Raw amounts are
+never summed across currencies; no conversion, cross-currency "fully paid"
+decision or auto-fulfillment is implemented. Amounts are declared component
+values that administrators verify.
+
+**Consequences:** This is a documented gap, not a business rule. Order status
+stays in its own domain flow (SPEC §10, #23). OQ-4, OQ-5 and Binance-receipt
+discovery remain OPEN; filling them would require a new decision and migration.
+
+## 30. One pending evidence submission per order and per payment — status: accepted
+
+**Context:** M3/M5 already enforce two receipts total, one bounded correction
+window and second-rejection cancellation (#24, #25); parallel digital evidence
+could otherwise create competing pending rows.
+
+**Decision:** Migration 006 adds partial UNIQUE indexes on
+`receipt_submissions(payment_id) WHERE review_status = 'pending'` and on
+`(order_id) WHERE review_status = 'pending'`. It calls the unchanged
+`hold_order_reservations` / `open_order_correction_window` RPCs rather than
+reimplementing the counters, window or cancellation.
+
+**Consequences:** At most one open review row per digital component and per
+order; the two digital evidence submissions allowed per order are exactly the
+original and one correction. Cash payments remain outside this mechanism, and
+`receipt_attempts` is only written by the existing RPCs.
+
+## 31. Session-derived admin identity for payment verification — status: accepted
+
+**Context:** Mutating payment RPCs need an administrator id for attribution, but
+service role has no meaningful `auth.uid()` and a client-supplied id would be
+forgeable (#13, SPEC §16).
+
+**Decision:** The server action verifies the session with `auth.getUser()` and
+the active `administrators` row through the existing RLS pattern, then passes
+that id to service-role RPCs. Every mutating RPC rechecks active status via
+`private.require_active_admin`; no RPC reads `auth.uid()`. Guest flows use only
+the private tracking token (#17).
+
+**Consequences:** A deactivated administrator cannot mutate payments even with
+a stale session; clients cannot attribute an action to another admin. Extends
+#13/#17/#20 without changing the authorization source. Public errors do not
+leak SQL details.
+
+## 32. POS and refund boundaries stay outside verification — status: accepted
+
+**Context:** SPEC §9/§12 require immediate POS inventory deduction and separate
+refund records, while payment approval must not become fulfillment (#23).
+
+**Decision:** Migration 006's POS RPC creates one `orders` row with
+`channel = 'pos'`, re-computes prices, allocates FIFO and consumes inventory via
+the existing `consume_order_reservations` RPC, writes one approved cash
+component, and is idempotent by key. Refunds are append-only, idempotent by key,
+copy currency from the payment, block over-refund and set
+`refunded_partial`/`refunded_full`. The approve/reject RPCs themselves do not
+advance `orders.status`, write movements, consume/release reservations or change
+`receipt_attempts`.
+
+**Consequences:** No duplicate inventory deduction or double refund; row locks,
+deterministic lock order and advisory locks serialise these paths. Verification
+remains separate from fulfillment, with only the unchanged M3/M5 RPCs owning
+second-rejection cancellation. OQ-7 (refund method domain — stored as non-empty
+free text) and OQ-11 (POS customer identity) remain OPEN, as do OQ-12, OQ-4 and
+OQ-5.

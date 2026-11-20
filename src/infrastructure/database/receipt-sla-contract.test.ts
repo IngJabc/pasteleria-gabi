@@ -41,6 +41,7 @@ describe("migration 005 contract (static)", () => {
       "003_orders_and_reservations.sql",
       "004_quote_acceptance.sql",
       "005_receipt_sla_notifications.sql",
+      "006_payments_and_verification.sql",
     ]);
   });
 

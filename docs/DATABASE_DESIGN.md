@@ -29,9 +29,17 @@ service-role RPCs and the extended PII-free tracking projection (§11) —
 validated locally, **not applied remotely**, with migrations 001–004 untouched.
 OQ-16 is now implemented additively by migration 005 plus a narrow scheduled
 worker (validated locally, 143 tests total, **not applied remotely/deployed**).
-Section 8 (payments), the exchange-rate write path (§10.1 — OQ-4), the
-checkout/tracking **UI**, Realtime publication and the remaining §11 functions
-of later phases stay design only. Every
+The **Payments Module** backend is implemented additively in
+`supabase/migrations/006_payments_and_verification.sql`: §8 (`payments`,
+`payment_refunds`, `receipt_submissions.payment_id`), the indexes/RLS/grants, the
+private `payment-receipts` bucket, audit integration and the §11 service-role
+RPCs — behaviorally validated on a disposable local PostgreSQL cluster
+(validation details in the final implementation report), **local-only; not
+applied remotely, deployed, committed or pushed**. Migrations 001–005 are
+untouched. This work is called "Phase 4" in older docs and "Phase 5" in tasking;
+both labels refer to the same payments-module scope. The exchange-rate write
+path (§10.1 — OQ-4), the checkout/payment/tracking **UI**, Realtime publication
+and the remaining §11 functions of later phases stay design only. Every
 table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
@@ -435,7 +443,7 @@ migration 004 and OQ-16 in migration 005 plus the dedicated worker, both
 | Receipt #2 (correction) submitted inside the window, held during review | held again (`expires_at = NULL`); attempts 1 → 2; window **not** re-armed | new/updated component `pending`/`in_review` | `pending` |
 | Receipt #2 **rejected** | automatic cancel: all active reservations `released` + `closed_at` (no movement, no stock change); availability restored once | final `rejected` | → `canceled` automatically |
 | Window lapses without a valid resubmission | lazily excluded from availability → cleanup sets `expired` | stays `rejected` | → `expired` |
-| Receipt approved | held (`expires_at = NULL`) until completion | `approved` | `pending → confirmed` (normal flow) |
+| Receipt approved | held (`expires_at = NULL`) until completion; payment verification writes no reservation/movement state | `approved` | unchanged by verification; `pending → confirmed` belongs to the separate order domain flow (SPEC §10, migration 006) |
 | Cancellation authorized (SPEC §11) | `released`; units available again immediately | untouched (refund recorded separately) | `canceled` |
 | Order completed | `consumed` → `sale` movement | `approved` | `completed` |
 
@@ -458,6 +466,7 @@ work.
 | --- | --- | --- | --- | --- |
 | `receipt_submissions` | `id` | bigint identity | no | immutable primary key, never updated except review fields |
 | | `order_id` | bigint FK → `orders(id)` | no | `ON DELETE CASCADE`; indexed |
+| | `payment_id` | bigint FK → `payments(id)` | yes | **added by migration 006**, `ON DELETE SET NULL`; indexed. Explicitly links this OQ-16 review/SLA row to the ONE payment component it evidences. Partial UNIQUE on `payment_id WHERE review_status = 'pending' AND payment_id IS NOT NULL`; a second partial UNIQUE on `order_id WHERE review_status = 'pending'` allows at most one pending submission per order |
 | | `attempt_number` | smallint | no | `CHECK IN (1, 2)`; `UNIQUE (order_id, attempt_number)` — one immutable row per actual submission |
 | | `submitted_at` | timestamptz | no | starts that submission's own 24-hour SLA; **never reset** |
 | | `reviewed_at` | timestamptz | yes | set exactly once when approved/rejected; `>= submitted_at` |
@@ -484,6 +493,14 @@ another recipient), and `ON CONFLICT DO NOTHING`. RLS is enabled and forced;
 admins can read receipt history, and can read/update **only** their own
 notification rows. All five RPCs are `SECURITY INVOKER`, `VOLATILE`, pinned to
 an empty `search_path` and granted to `service_role` only.
+
+Migration 006 adds the `payment_id` link above without changing this history:
+`receipt_submissions` remains the **review/SLA history**, not a competing
+payment ledger, while `payments` is the single financial history. Cash payments
+create no submission and never increment `orders.receipt_attempts`; digital
+methods require a server-validated private receipt path and reference. The
+unchanged M3/M5 RPCs still own the two-receipt cap, so only two digital evidence
+submissions can exist per order.
 
 - **Indexes:** `inventory_reservations_order_id_idx`, partial
   `inventory_reservations_active_batch_idx (batch_id) WHERE status = 'active'`,
@@ -629,19 +646,19 @@ changes when the catalog changes (SPEC §4 requires historical product prices).
 
 ### 8.1 `payments`
 
-**Purpose:** one row per payment **component** of an order (SPEC §5): Pago
-Móvil, cash USD, and — in later phases — Binance methods; several rows may
-belong to one order (combined payments), and each is verified individually. A
-receipt is evidence, never automatic confirmation (SPEC §5); verification is an
-explicit, admin-attributed state change.
+**Purpose:** one row per payment **component** of an order (SPEC §5); several
+rows, possibly in different currencies, may belong to one order (combined
+payments), and each is verified individually. A receipt is evidence, never
+automatic confirmation (SPEC §5); verification is an explicit, admin-attributed
+state change. **Implemented in migration 006** (local only, additive; no UI).
 
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
 | `id` | bigint identity | no | PK |
 | `order_id` | bigint | no | FK `orders` on delete cascade |
-| `method` | text | no | `CHECK (method IN ('pago_movil','cash_usd','binance_pay','binance_transfer'))` — the four SPEC §5 methods; MVP UI only offers the first two (binance arrives later) |
+| `method` | text | no | `CHECK (method IN ('pago_movil','cash_usd','binance_pay','binance_transfer'))` — **exactly** the four SPEC §5 methods; `binance_pay` and `binance_transfer` are the two USDT modalities already named there (the earlier single `binance` shorthand is not a stored value) |
 | `currency` | text | no | `CHECK (currency IN ('USD','VES','USDT'))` (SPEC §5) |
-| `amount` | numeric(14,2) | no | `CHECK (amount > 0)` |
+| `amount` | numeric(14,2) | no | `CHECK (amount > 0)`; a **declared** component value that administrators verify, not a converted or authoritative amount |
 | `reference` | text | yes | bank/transaction reference; `CHECK (method = 'cash_usd' OR reference IS NOT NULL)` (SPEC §5) |
 | `receipt_path` | text | yes | object path in the **private** `payment-receipts` bucket; required for digital methods — server-enforced invariant (single-step upload+insert) |
 | `amount_tendered_usd` | numeric(10,2) | yes | cash only: money offered, for change calculation (SPEC §5); `CHECK >= 0` |
@@ -652,12 +669,24 @@ explicit, admin-attributed state change.
 | `idempotency_key` | text | yes | UNIQUE — client-generated per checkout attempt; kills duplicate submissions (SPEC §16) |
 | `created_at` / `updated_at` | timestamptz | no | |
 
+- **Method/currency pairs (migration 006 CHECK):** EXACTLY
+  `pago_movil`→VES, `cash_usd`→USD, `binance_pay`→USDT and
+  `binance_transfer`→USDT. No other method or currency exists. Digital methods
+  require a reference and a receipt path; cash requires neither and is the only
+  method that may carry `amount_tendered_usd`. The Binance identifier/receipt
+  format remains an open discovery item (SPEC §19).
 - **Indexes:** `payments_order_id_idx`, FK indexes for `registered_by` /
   `verified_by`, partial
-  `payments_review_queue_idx (created_at DESC) WHERE status IN ('pending','in_review')`.
-- **Derived, not stored:** "order fully paid" = Σ(approved amounts) covers the
-  order total and no component is pending — computed by query/RPC (§11), never a
-  column a client could influence.
+  `payments_review_queue_idx (created_at DESC) WHERE status IN ('pending','in_review')`,
+  plus the partial unique index on `receipt_submissions.payment_id` for open
+  submissions (§6.2).
+- **Per-currency facts only:** `get_order_payment_summary(p_order_id)` reports
+  approved/pending/in_review/rejected/refunded amounts and payment counts
+  **grouped by currency** (§11). Raw amounts are **never** summed across
+  currencies. There is no authoritative conversion, cross-currency "fully paid"
+  decision or auto-fulfillment; the declared amounts are what administrators
+  verify. OQ-4 (BCV rate write path), OQ-5 (rounding rule) and Binance-receipt
+  discovery remain OPEN — this is a documented gap, not a business rule.
 - **Change (vuelto):** derived as `amount_tendered_usd − order.total_usd` at
   registration time — not stored (SPEC §5 asks only to *calculate* it).
 
@@ -675,12 +704,19 @@ payment is never edited beyond its lifecycle `status`.
 | `method` | text | no | how the money was returned — **values undefined by SPEC §12**, see OQ-7 (no CHECK yet, on purpose) |
 | `reason` | text | no | required (SPEC §12) |
 | `admin_id` | uuid | no | FK `administrators` — responsible admin (SPEC §12) |
+| `idempotency_key` | text | yes | UNIQUE — added by migration 006; repeated refund submissions collapse to one row |
 | `created_at` | timestamptz | no | |
 
 - **Invariant (server-enforced):** Σ refunds per payment ≤ payment amount;
   crossing 100 % flips `payments.status` to `refunded_full`, otherwise
-  `refunded_partial`.
+  `refunded_partial`. `currency` is copied from the original payment by the
+  server; `method` is non-empty free text because OQ-7 (refund method domain)
+  remains OPEN — no value list is invented.
 - **Indexes:** `payment_refunds_payment_id_idx`, `payment_refunds_admin_id_idx`.
+- **Status (migration 006, local only):** append-only rows written by the
+  `record_refund` service-role RPC (advisory lock + UNIQUE idempotency key,
+  over-refund blocked); the original payment row is never rewritten beyond its
+  lifecycle `status`. Audit rows use `refund.create`.
 
 ## 9. Cancellations
 
@@ -784,7 +820,14 @@ No table duplicates another table's state. Everything derived is computed:
 | `accept_quote_fee(p_order_id)` | function | service role only (**internal server primitive**, not a customer authorization path) | OQ-17, migration 004: locks reservations → orders, validates pending online quote delivery with no receipt and a confirmed fee, then writes `quote_acceptance_expires_at = expires_at = acceptance_time + 20 min` **once**, sets `orders.quote_accepted_at` and inserts one `order.quote_accept` audit row in the same transaction; idempotent replay returns the original values without writing or reviving closed reservations; `initial_expires_at` is never touched |
 | `accept_quote_fee_for_tracking(p_token)` | function | service role only (called by the server action) | OQ-17, migration 004: the customer's **only** entry point; resolves the order from `sha256(token)` on the server and delegates to `accept_quote_fee` — no order id, name or phone is accepted as authorization |
 | `acceptQuoteFee({ trackingToken })` | server action (`src/features/orders/accept-quote.ts`) | customer via the private tracking link | validates a 64-hex tracking token and calls only `accept_quote_fee_for_tracking` through the service-role client; accepts no order id and writes no table directly (SECURITY_DESIGN §6/§8) |
-| `order_payment_summary` | view (`security_invoker = true`) | authenticated admins (anon revoked) | per-order approved/pending/refunded totals for the dashboard |
+| `register_payment(...)` | function | service role only | migration 006 internal primitive: inserts one payment component with server-derived status, UNIQUE idempotency key, order row lock and `payment.register` audit row; never trusts client money/status fields |
+| `register_payment_for_tracking(p_token, p_method, p_amount, p_reference, p_receipt_path, p_idempotency_key)` | function | service role only (guest server action) | migration 006: resolves the private tracking token hash, derives the currency from the method (`pago_movil`→VES, Binance methods→USDT), accepts no order id or admin id, delegates to `register_payment` |
+| `submit_payment_evidence(p_payment_id)` | function | service role only | migration 006: links the evidence to the one pending `receipt_submissions` row via `payment_id` and moves the payment to `in_review`; calls the unchanged `hold_order_reservations` so the attempt counter, held state, SLA row and two-receipt cap stay in one implementation; rejects cash payments |
+| `approve_payment(p_payment_id, p_admin_id)` | function | service role only | migration 006: sets `approved` with verified_by/at, closes the linked SLA submission through the existing `approve_receipt_submission`, audits `payment.verify`; no order/inventory write of its own |
+| `reject_payment(p_payment_id, p_admin_id)` | function | service role only | migration 006: sets `rejected` with verified_by/at and delegates any correction window / second-rejection cancellation to the unchanged `open_order_correction_window`; never increments `receipt_attempts` itself |
+| `register_pos_cash_sale(p_items, p_amount_tendered_usd, p_idempotency_key, p_admin_id)` | function | service role only | migration 006: one POS order (`channel = 'pos'`), server-recomputed prices, FIFO allocation and immediate consumption via `consume_order_reservations`, one approved `cash_usd` component, deterministic lock order + advisory lock + UNIQUE idempotency key; no duplicate inventory deduction |
+| `record_refund(p_payment_id, p_amount, p_method, p_reason, p_admin_id, p_idempotency_key)` | function | service role only | migration 006: append-only `payment_refunds` row (currency copied from the payment, non-empty free-text method — OQ-7 open), over-refund blocked, `refunded_partial`/`refunded_full` status and `refund.create` audit; advisory lock + UNIQUE idempotency key |
+| `get_order_payment_summary(p_order_id)` | function (read model) | authenticated admins and service role; anon revoked | migration 006 per-currency read model: approved/pending/in_review/rejected/refunded amounts and payment counts; no cross-currency arithmetic. This RPC implements the earlier `order_payment_summary` view sketch (no view is created) |
 
 **Implemented mechanism (decision #26 — Phase 4 / migration 004, local only):**
 
@@ -824,6 +867,33 @@ only):**
   wait. No external provider/outbox is configured: the in-app inbox is the
   delivery.
 
+**Implemented mechanism (Payments Module — migration 006, local only):**
+
+- All new mutations are service-role RPCs; the admin id is **never**
+  client-supplied as authorization. The server action verifies the session with
+  `auth.getUser()` and the active `administrators` row through the existing RLS
+  pattern, and every mutating RPC rechecks active status via
+  `private.require_active_admin`. No RPC reads `auth.uid()`. Guest flows use
+  only the private tracking token. Public errors do not leak SQL details.
+- The private `payment-receipts` bucket admits administrator SELECT only — no
+  client INSERT/UPDATE/DELETE policies. The server action validates MIME type,
+  size, token-derived ownership, order state and submission eligibility before
+  uploading with the service role, and removes the object if the RPC fails.
+- Payment verification is separate from order fulfillment: the approve/reject
+  RPCs do not advance `orders.status`, write inventory movements, consume or
+  release reservations, or change `receipt_attempts`. The unchanged M3/M5 RPCs
+  remain the sole implementation of the two-receipt cap, the single 20-minute
+  correction window and second-rejection cancellation; migration 006 calls
+  them. `get_order_payment_summary` is read-only and per currency only.
+- Concurrency controls: UNIQUE idempotency keys on payments and refunds, the
+  partial unique pending-submission indexes (§6.2), row locks with deterministic
+  payment → order lock order, and advisory locks for the POS and refund paths.
+- Backend-only server actions cover guest digital registration with private
+  receipt upload, admin cash registration against an existing online order,
+  admin approve/reject, offline POS cash sale, refund recording and the
+  per-currency summary. No UI was added; validation details are in the final
+  implementation report.
+
 **Realtime (Phase 6):** `orders`, `payments` and `cancellation_requests` will be
 added to the `supabase_realtime` publication; Realtime respects the same RLS
 policies, so administrators receive only what they may already read.
@@ -857,7 +927,9 @@ Nothing blocks adding made-to-order whole cakes later:
 - `order_items` already snapshots name/price, so a new product kind needs no
   structural change; `inventory_batches`/`movements` remain the record for
   anything physically produced.
-- New payment methods (Binance) only widen the `method` CHECK; new
+- Both Binance modalities (Binance Pay and user-to-user transfers, both USDT)
+  are already supported by the migration 006 method/currency CHECK; only an
+  *additional* method beyond the four current values would widen it. New
   administrators are new `administrators` rows; more products are data.
 
 ## 14. Open questions and confirmations (status register)
@@ -881,4 +953,13 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-15 | Confirm the hold rule: a submitted receipt awaiting verification suspends the reservation deadline (`expires_at = NULL`) until an administrator acts | **Resolved by the confirmed M3 rules:** migration 003's `hold_order_reservations` suspends the deadline and counts the submission (idempotent on repeats); the receipt stays held throughout admin review |
 | OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved (DECISIONS #25) and implemented in Phase 6** by migration 005 + `supabase/worker/sla-worker.mjs` (validated locally, not applied remotely/deployed): each receipt submission starts its own 24-hour clock; every active administrator receives a durable in-app notification on the first worker run after the deadline, repeated every 15 minutes until that submission is approved/rejected; dedupe key `(receipt_submission_id, admin_id, interval_bucket)`. **Never** auto-cancels the order or releases inventory; no change to M3/M4 status or reservation rules |
 | OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally, not applied remotely): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
+
+**Still open after migration 006 (Payments Module):** OQ-7 (refund method value
+domain — stored as non-empty free text, no domain invented), OQ-11 (POS customer
+identity), OQ-12 (guest receipt re-view), OQ-4 (BCV rate write path) and OQ-5
+(rounding rule). The specific Binance identifier/receipt data and modality
+details (SPEC §19) and the cash-on-delivery/combined-payment operating policy
+are also still open. Migration 006 adds no conversion rule, cross-currency
+"fully paid" decision or auto-fulfillment; declared component amounts are what
+administrators verify. None of these questions is resolved by this work.
 

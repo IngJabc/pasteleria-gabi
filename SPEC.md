@@ -101,6 +101,20 @@ Se registrarán:
 - Administrador que verificó.
 - Fecha y hora.
 
+La migración 006 (`006_payments_and_verification.sql`, solo local) implementa
+este backend: los comprobantes se almacenan en el bucket privado
+`payment-receipts` con ruta `{order_id}/{uuid}.{ext}`; el servidor valida el tipo
+MIME (jpeg/png/webp/PDF), el tamaño (≤ 5 MB), la propiedad derivada del token, el
+estado del pedido y la elegibilidad de la presentación, y sube el archivo con el
+service role. No se confía en el MIME/tamaño/ruta informados por el cliente; si
+falla el RPC, se elimina el objeto. El vínculo `receipt_submissions.payment_id`
+asocia el historial de revisión/SLA (OQ-16) con **un** componente de pago; como
+máximo existe una presentación pendiente por pedido y por pago. Los pagos en
+efectivo no crean presentación, no requieren comprobante y nunca incrementan
+`orders.receipt_attempts`. El límite existente de dos comprobantes por pedido
+sigue vigente, por lo que solo pueden existir dos presentaciones digitales de
+evidencia por pedido.
+
 ### Efectivo
 
 Se permitirá efectivo en USD para pedidos online y presenciales, independientemente del método de entrega.
@@ -114,6 +128,23 @@ El checkout tendrá un campo opcional para indicar con cuánto dinero pagará el
 Cada componente del pago deberá registrarse individualmente. El pedido se considerará completamente pagado cuando se hayan cubierto y verificado todos los importes correspondientes.
 
 No habrá un sistema de cuotas ni de pagos parciales pendientes para completar en diferentes operaciones posteriores. El efectivo contra entrega constituye una modalidad de cobro diferida expresamente permitida.
+
+**Implementación (migración 006; backend local, sin interfaz):** los pares
+método/moneda almacenados son **exactamente** `pago_movil`→VES, `cash_usd`→USD,
+`binance_pay`→USDT y `binance_transfer`→USDT (Binance Pay y transferencias entre
+usuarios, ambos en USDT; los datos identificativos de Binance siguen pendientes
+de descubrimiento, §19). No existe otro método ni otra moneda. Un pago es un
+componente de un pedido: un pedido puede tener varios componentes y varias
+monedas. `get_order_payment_summary` informa importes aprobados/pendientes/en
+revisión/rechazados/devueltos y conteos de pagos **por moneda**; los importes
+brutos nunca se suman entre monedas. No hay conversión autoritativa, decisión de
+"pagado por completo" entre monedas ni cumplimiento automático: los importes son
+valores declarados de cada componente que los administradores verifican. Esta
+ausencia es una brecha documentada, no una regla de negocio. Siguen abiertos OQ-4
+(ruta de escritura de la tasa BCV), OQ-5 (regla de redondeo) y el descubrimiento
+del comprobante de Binance. La documentación técnica denominaba este alcance
+"Fase 4" y las tareas lo denominan "Fase 5"; ambos nombres designan el mismo
+módulo de pagos.
 
 ## 6. Delivery y retiro
 
@@ -227,6 +258,15 @@ Se distinguirán los pedidos online de las ventas presenciales.
 
 También se podrá registrar un pago recibido fuera de la web para un pedido online existente, sin crear una segunda venta ni duplicar el descuento de inventario.
 
+**Implementación (migración 006; backend local, sin interfaz):** la venta
+presencial se registra como una sola fila de `orders` con `channel = 'pos'`, con
+precios recalculados por el servidor, asignación FIFO inmediata y consumo de
+inventario mediante el RPC existente `consume_order_reservations`, un único
+componente de pago en efectivo aprobado e idempotencia por clave. No hay doble
+descuento de inventario. El registro de pagos externos contra pedidos online
+existentes también forma parte de este backend. La identidad del cliente en POS
+(OQ-11) sigue sin resolverse.
+
 ## 10. Estados de pedidos y pagos
 
 El estado del pedido será independiente del estado del pago.
@@ -251,7 +291,13 @@ Los estados deberán representar, como mínimo:
 
 La aprobación del pago no significa automáticamente que el pedido haya sido entregado.
 
-Como los productos ya están elaborados, no es obligatorio un estado de preparación posterior a la compra.
+La verificación de pagos es independiente del cumplimiento del pedido. Los RPC
+de aprobación/rechazo de la migración 006 no cambian por sí mismos
+`orders.status`, no escriben movimientos de inventario, no consumen ni liberan
+reservas y no modifican `receipt_attempts`. Los RPC existentes M3/M5 siguen siendo
+la única implementación del límite de dos comprobantes, de la única ventana de
+corrección de 20 minutos y de la cancelación automática por segundo rechazo; la
+migración 006 los invoca en lugar de reimplementarlos. Como los productos ya están elaborados, no es obligatorio un estado de preparación posterior a la compra.
 
 ## 11. Cancelaciones
 
@@ -283,6 +329,13 @@ Los administradores podrán registrar devoluciones parciales o totales, conserva
 - Fecha y hora.
 
 Una devolución no deberá borrar ni modificar el registro histórico del pago original.
+
+**Implementación (migración 006; backend local, sin interfaz):** `payment_refunds`
+es append-only, con idempotencia por clave y moneda copiada del pago original. El
+importe devuelto no puede superar el del pago; el estado del pago pasa a
+`refunded_partial` o `refunded_full`. OQ-7 (dominio de valores del método de
+devolución) permanece abierto: el método se registra como texto no vacío, sin
+inventar un dominio.
 
 ## 13. Notificaciones y comunicación
 
@@ -383,6 +436,13 @@ No se fijará una identidad definitiva hasta que el negocio apruebe una propuest
 - Precisar los límites geográficos de la zona norte para la clasificación que hará el cliente.
 - Definir el tratamiento operativo de pedidos con efectivo contra entrega y pagos combinados.
 - Definir la política comercial para pedidos con cotización de delivery (el plazo de reserva tras la aceptación de la tarifa ya está definido en las secciones 6 y 8; falta la política comercial en sí).
+
+Tras la migración 006 siguen abiertos: OQ-7 (métodos de devolución), OQ-11
+(identidad del cliente en POS), OQ-12 (revisión del comprobante por el invitado),
+OQ-4 y OQ-5 (tasa BCV y redondeo), el identificador y los datos de recepción de
+Binance (incluida la modalidad técnica de ambas variantes) y la política
+operativa de efectivo contra entrega y pagos combinados. Ninguno se resuelve en
+esta migración.
 
 Estos pendientes no impiden avanzar con el diseño visual ni con la arquitectura inicial, pero deberán resolverse antes de implementar los flujos afectados.
 

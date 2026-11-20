@@ -29,8 +29,15 @@ extended PII-free tracking projection, §8 invariant) is implemented in
 applied remotely**. The Phase 6 / M6 OQ-16 subset is implemented in
 `supabase/migrations/005_receipt_sla_notifications.sql` plus the narrow
 `supabase/worker/sla-worker.mjs` (local validation, 143 tests; **not applied
-remotely or deployed**).
-Policies for M4+ migrations remain proposals, derived from
+remotely or deployed**). The Payments Module subset (§4 payments/refunds and
+`payment-receipts` policies, §5 service-role RPCs, §6/§7/§8 token, storage and
+validation invariants) is implemented in
+`supabase/migrations/006_payments_and_verification.sql`: behaviorally validated
+on a disposable local PostgreSQL cluster (details in the final implementation
+report), **local-only; not applied remotely, deployed, committed or pushed**.
+Migrations 001–005 are untouched. Historical docs call this scope "Phase 4",
+tasking calls it "Phase 5"; both names refer to the same backend.
+Policies for later migrations remain proposals, derived from
 [`SPEC.md`](../SPEC.md) §16
 and the invariants in
 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) §5. Table/column definitions live in
@@ -122,8 +129,9 @@ standard fix: a `SECURITY DEFINER` helper that reads the table as its owner:
 
 > **Status:** the M1 policies (six catalog/settings/zone tables, storage) are
 > applied in migration `001`, the M2 inventory policies in `002`, and the M3
-> order/reservation/cancellation/exchange-rate policies in `003`; rows marked
-> M4+ remain proposals for a later migration. Convention: policies specify
+> order/reservation/cancellation/exchange-rate policies in `003`; the
+> payments/refunds and private receipt-bucket policies in `006`; other rows
+> marked M4+ remain proposals for a later migration. Convention: policies specify
 > `TO anon` / `TO authenticated` explicitly (never the deprecated
 > `auth.role()`), wrap identity lookups as `(select …)`, and every `UPDATE`
 > policy carries both `USING` and `WITH CHECK`.
@@ -142,8 +150,9 @@ Table cells: allowed operations. `—` = no policy ⇒ no access.
 | `administrators` | — | SELECT | write only |
 | `orders` | — (tracking via server function) | ALL | bypass |
 | `order_items` | — | ALL | bypass |
-| `payments` | — | ALL | bypass |
-| `payment_refunds` | — | ALL | bypass |
+| `payments` | — (no anon read) | SELECT (RLS via `private.is_admin()`; no table writes) | bypass |
+| `payment_refunds` | — (no anon read) | SELECT (RLS via `private.is_admin()`; no table writes) | bypass |
+| `receipt_submissions` | — | SELECT (review/SLA history) | bypass |
 | `cancellation_requests` | — | ALL | bypass |
 | `inventory_batches` | — (stock via server function) | ALL | bypass |
 | `inventory_reservations` | — | ALL | bypass |
@@ -154,6 +163,13 @@ Table cells: allowed operations. `—` = no policy ⇒ no access.
 admin can add rows (entries, adjustments, audit events) but no policy lets
 anyone rewrite history. (Service role, by design, still bypasses RLS — the
 operational rule "never UPDATE these tables" is documented for server code.)
+
+Migration 006 implements the `payments`/`payment_refunds` rows above with RLS
+enabled **and forced**, admin-only ALL policies and least-privilege grants:
+`anon` cannot read payment tables, authenticated admins can read via RLS, and
+**no client role has a table write path** — every mutation is a service-role
+RPC. `payment_refunds` is append-only in practice (no client UPDATE/DELETE
+path); `payments.status` changes only through the review/refund RPCs.
 
 ### 4.2 Representative policies
 
@@ -202,9 +218,11 @@ create policy orders_admin_all on public.orders
   using ((select private.is_admin()))
   with check ((select private.is_admin()));
 
--- identical shape for: order_items, payments, payment_refunds,
--- cancellation_requests, inventory_batches, inventory_reservations,
--- products, product_images, delivery_zones, store_settings, exchange_rates
+-- identical policy shape for: order_items, payments, payment_refunds (both
+-- implemented in migration 006, with table writes additionally revoked from
+-- anon/authenticated and only SELECT granted to authenticated),
+-- cancellation_requests, inventory_batches, inventory_reservations, products,
+-- product_images, delivery_zones, store_settings, exchange_rates
 ```
 
 ```sql
@@ -244,7 +262,9 @@ Anti-patterns deliberately avoided:
 | `accept_quote_fee`, `accept_quote_fee_for_tracking`, and the replaced `get_order_for_tracking` (Phase 4 — implemented in migration 004) | **service role only** (explicit `revoke … from public, anon, authenticated`; `SECURITY INVOKER`, `search_path = ''`) | quote acceptance is dispatched only from the server action after token validation; `accept_quote_fee` is an internal primitive (no customer authorization by order id) |
 | `adjust_inventory`, `create_inventory_batch` (Phase 2 — implemented in migration 002) | `authenticated` only (`revoke … from public, anon, service_role`), with an internal `is_admin()` check in the body | admin panel needs them with the caller's `auth.uid()` for attribution |
 | `process_sla_notifications`, `approve_receipt_submission` and `private.close_pending_receipt_submission` (Phase 6 — implemented in migration 005) | **service role only** (explicit `revoke … from public, anon, authenticated`; `VOLATILE`, `SECURITY INVOKER`, `search_path = ''`) | only the dedicated SLA worker or server-side review flow may close SLA state; clients have no RPC path |
-| `order_payment_summary` view | `SELECT` for `authenticated`, revoked from `anon` | dashboard aggregation |
+| `register_payment`, `register_payment_for_tracking`, `submit_payment_evidence`, `approve_payment`, `reject_payment`, `register_pos_cash_sale`, `record_refund` (Payments Module — implemented in migration 006) | **service role only** (explicit `revoke … from public, anon, authenticated`; `SECURITY INVOKER`, pinned `search_path`, `VOLATILE` where mutating) | every payment mutation runs from server code; the admin id is checked via `private.require_active_admin`, and guest flows use only the private tracking token |
+| `private.require_active_admin(p_admin_id uuid)` (migration 006) | `service_role` only (revoked from `public`, `anon`, `authenticated`) | rechecks that the session-derived administrator is active inside every mutating RPC; never reads `auth.uid()` |
+| `get_order_payment_summary(p_order_id)` (migration 006, read-only) | `authenticated` + `service_role`, revoked from `anon` and `public` | per-currency dashboard aggregation under RLS; replaces the earlier `order_payment_summary` view sketch (no view is created) |
 
 Rules for every function (design-level):
 
@@ -320,6 +340,16 @@ unauthorized modifications.
   `data` in the **same transaction** as the deadline write. The server action
   `src/features/orders/accept-quote.ts` validates that the token is 64 hex
   characters and calls only this RPC; it never writes a table directly.
+- **Guest digital payment registration (migration 006):** the server action
+  validates the private tracking token, the method and the uploaded file, then
+  calls the service-role-only `register_payment_for_tracking`, which resolves
+  `sha256(token)` to an order and derives the currency from the method. The
+  client supplies neither an order id nor an administrator id, and no payment
+  table is writable through the link. `submit_payment_evidence` links the
+  server-uploaded receipt to the single pending submission, calling the
+  unchanged `hold_order_reservations` for the attempt counter and two-receipt
+  cap. Cash payments create no submission. Whether a guest may re-view their
+  own receipt remains open (OQ-12).
 - Brute force is infeasible (high-entropy token, unique-indexed digest); no
   rate limiting dependency is added for the MVP.
 
@@ -330,7 +360,8 @@ unauthorized modifications.
 | `product-images` | **public** read | product photographs (SPEC §16: public bucket) | `{product_id}/{uuid}.{ext}` |
 | `payment-receipts` | **private** | Pago Móvil / payment receipts (SPEC §16: private bucket) | `{order_id}/{uuid}.{ext}` |
 
-**Proposed `storage.objects` policies** (bucket-scoped):
+**`storage.objects` policies** (bucket-scoped; `product-images` from 001, the
+`payment-receipts` admin SELECT policy implemented in migration 006):
 
 ```sql
 -- product-images: only administrators write; public read via bucket visibility
@@ -354,11 +385,17 @@ create policy payment_receipts_admin_select on storage.objects
 **Upload flows (why no client write policies on receipts):** a guest has no
 auth identity, so an `anon` INSERT policy on receipts would be unattributable
 and unfalsifiable (anyone could post arbitrary objects for any order folder).
-Instead the checkout server action validates the file (technical parameters:
-jpeg/png/webp/PDF, ≤ 5 MB — proposed technical limits, not business rules),
-then uploads with the **service role** and stores the returned path on the
-`payments` row in the same operation. Admin panel uploads (product photos) use
-the session client under the admin policies above.
+Migration 006 keeps this design: the private `payment-receipts` bucket has
+administrator SELECT only and **no client INSERT/UPDATE/DELETE policies**. The
+server action validates MIME type (jpeg/png/webp/PDF), size (≤ 5 MB — technical
+limits, not business rules), token-derived ownership, order state and
+submission eligibility — never trusting client-reported MIME, size or path —
+then uploads with the **service role** under `{order_id}/{uuid}.{ext}`, stores
+the returned path on the `payments` row and **removes the object if the RPC
+fails**. `next.config.ts` raises the Server Action request body limit to `6mb`
+(Next.js defaults to 1 MB) so a 5 MB receipt plus multipart overhead is not
+rejected before validation. Admin panel uploads (product photos) use the session
+client under the admin policies above.
 
 **Receipt visibility:** administrators can read every receipt (verification
 needs it). Whether the *guest* can re-view their own receipt from the tracking
@@ -383,6 +420,13 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 | Inventory atomicity | Multi-row mutations happen only inside RPC transactions (single UPDATE storms from the app are forbidden) |
 | Refunds never rewrite history | New `payment_refunds` rows only; original payment row keeps amount/reference/receipt |
 | Audit of admin operations | `audit_log` append-only, RLS INSERT attributed to `(select auth.uid())` |
+| Supported payment pairs (migration 006) | DB CHECK allows EXACTLY `pago_movil`→VES, `cash_usd`→USD, `binance_pay`→USDT, `binance_transfer`→USDT; no other method/currency is stored. Binance's identifier/receipt details remain an open discovery item |
+| Per-currency payment facts only | `get_order_payment_summary` groups by currency; no cross-currency sum, conversion, "fully paid" decision or auto-fulfillment. Declared component amounts are administrator-verified; OQ-4/OQ-5 remain OPEN (documented gap, not a business rule) |
+| Payment verification is not fulfillment | The migration 006 approve/reject RPCs do not advance `orders.status`, write inventory movements, consume/release reservations or change `receipt_attempts`. The unchanged M3/M5 RPCs are the only implementation of the two-receipt cap, single 20-minute correction window and second-rejection cancellation; migration 006 delegates to them |
+| Evidence linkage and single pending submission | `receipt_submissions.payment_id` links the OQ-16 review/SLA history to ONE payment component; partial UNIQUE indexes allow at most one pending submission per order and per payment. Cash creates no submission, needs no receipt and never increments `receipt_attempts`; digital methods need a server-validated private path and reference, so the existing two-receipt cap permits only two digital evidence submissions per order |
+| Admin id is session-derived, not client-supplied | The server action verifies the session with `auth.getUser()` and the active `administrators` row via the existing RLS pattern; every mutating RPC rechecks with `private.require_active_admin`. No RPC reads `auth.uid()`. Guest flows use only the private tracking token; public errors do not leak SQL details |
+| Payment/POS/refund concurrency | UNIQUE idempotency keys on `payments` and `payment_refunds`, partial unique pending-submission indexes, row locks with deterministic payment → order order (reservation locks stay in the M3 RPCs), and advisory locks for POS and refund; repeats are idempotent no-ops with no double inventory deduction or double refund |
+| Refund boundaries | Append-only `payment_refunds` rows, currency copied from the payment, over-refund blocked, `refunded_partial`/`refunded_full` status; OQ-7 stays OPEN — the method is non-empty free text with no invented domain |
 
 ## 9. Secrets and configuration
 
@@ -421,6 +465,9 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 | Seguimiento con tokens aleatorios y hashes | §6: ≥128-bit token, SHA-256 stored, plaintext shown once |
 | Protección frente a duplicación | §8 row 4: idempotency key + partial unique constraints |
 | Auditoría de operaciones administrativas | §4.2 `audit_log` append-only with self-attribution |
+| Comprobantes en bucket privado (migration 006) | §7: admin-SELECT-only policy, no client writes, server-side MIME/size/ownership/state validation, service-role upload and cleanup on RPC failure |
+| Protección frente a duplicación de pagos (migration 006) | §8: UNIQUE idempotency keys for payments/refunds, partial unique pending submissions, row/advisory locks; payment status only via server RPCs |
+| Autorización en pagos (migration 006) | §5/§8: session-derived admin id checked by `private.require_active_admin` in every mutating RPC, no `auth.uid()` read, guest access only through the private tracking token |
 
 ## 12. Verification plan (when migrations are eventually applied)
 
@@ -438,4 +485,12 @@ Design-level checks to run in the migration phase (none applicable yet):
    `anon`/`authenticated`.
 6. Tracking: correct token returns the PII-free projection; wrong token returns
    nothing; the projection contains no `customer_*`/`address_*` fields.
+
+Payments Module update: the migration 006 subset of this plan (RLS/grants,
+private bucket, service-role RPCs, idempotency and concurrency boundaries) was
+validated behaviorally on a disposable local PostgreSQL cluster; validation
+details are in the final implementation report. Migration 006 is **local-only**
+— no remote apply, deployment, commit or push. Open items OQ-7, OQ-11, OQ-12,
+OQ-4, OQ-5, the Binance identifier/modality details and the cash-on-delivery
+policy are unchanged by it.
 

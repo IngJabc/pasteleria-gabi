@@ -6,6 +6,11 @@ before its phase starts.
 
 Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
+> **Payments Module naming:** `supabase/migrations/006_payments_and_verification.sql`
+> is the Payments Module backend. Historical roadmap headings call this scope
+> **Phase 4**; tasking calls it **Phase 5**. Both labels refer to the same
+> scope — the old headings are kept for history and are not renamed.
+
 ---
 
 ## Phase 0 — Project initialization ✅
@@ -104,13 +109,32 @@ their migrations.
 
 **Progress:** the OQ-17 quote-acceptance transition is implemented in
 `supabase/migrations/004_quote_acceptance.sql` and validated locally (109 tests
-total); **not applied to any remote Supabase project**. The payment workflow
-below remains to do.
+total); **not applied to any remote Supabase project**. The Payments Module
+backend is implemented additively in
+`supabase/migrations/006_payments_and_verification.sql` (local-only; behaviorally
+validated on a disposable local PostgreSQL cluster — validation details are in
+the final implementation report). No payment/receipt UI is included; migrations
+001–005 are untouched. **Not applied remotely, deployed, committed or pushed.**
 
-- Pago Móvil (VES) with receipt upload to a **private** Storage bucket; receipts
-  are evidence, never automatic confirmation.
-- Manual verification workflow (pending → in review → approved/rejected) with
-  the verifying administrator recorded.
+**Supported methods: exactly** `pago_movil` → VES, `cash_usd` → USD,
+`binance_pay` → USDT and `binance_transfer` → USDT (the two Binance modalities
+of SPEC §5). No other method or currency exists. A payment is one component of
+an order; an order may have several components and currencies. The
+`get_order_payment_summary` RPC reports per-currency approved/pending/in_review/
+rejected/refunded amounts and payment counts; raw amounts are **never** summed
+across currencies. There is no authoritative conversion, cross-currency
+"fully paid" decision or auto-fulfillment. Payment amounts are declared
+component values that administrators verify — this is a documented gap, not a
+business rule. OQ-4, OQ-5 and the Binance receipt/identifier discovery remain
+OPEN.
+
+- **Implemented in migration 006 (backend only):** Pago Móvil (VES) with
+  server-validated receipt upload to the **private** `payment-receipts` bucket
+  (`{order_id}/{uuid}.{ext}`); receipts are evidence, never automatic
+  confirmation.
+- **Implemented in migration 006:** manual verification workflow
+  (pending → in review → approved/rejected) with the verifying administrator
+  derived from the verified session and rechecked in every mutating RPC.
 - **Implemented (OQ-17 / DECISIONS #26):** server-side quote-acceptance
   transition. The customer's explicit acceptance through the private tracking
   token is hashed (SHA-256) and resolved on the server; a service-role RPC
@@ -120,22 +144,49 @@ below remains to do.
   administrative retries never extend the window, the correction window and
   24-hour SLA are untouched, and the operation is idempotent and audited
   (`order.quote_accept`, no PII/token in the payload). No client write path.
-- Cash in USD (including "amount given" for change) and combined payments; every
-  component registered individually; idempotency against duplicate payments.
+- **Implemented in migration 006:** cash in USD (including "amount given" for
+  change) and combined payments; every component registered individually, with
+  database-level UNIQUE idempotency keys against duplicate payments. Cash
+  creates no receipt submission, requires no receipt and never increments
+  `orders.receipt_attempts`.
 - USD pricing snapshots per order: prices, subtotal, delivery, total, applied
-  BCV rate, rate timestamp, VES total and rounding rule (SPEC §4).
-- Out of scope for this phase: Binance Pay / Binance transfers (SPEC §5.3–5.4).
+  BCV rate, rate timestamp, VES total and rounding rule (SPEC §4) — snapshot
+  columns remain from M3; the rate write path (OQ-4) and rounding rule (OQ-5)
+  are still OPEN and are not defined by migration 006.
+- **Implemented in migration 006:** both Binance modalities — Binance Pay and
+  user-to-user transfers — each in USDT. The specific Binance identifier and
+  receipt data remain an open discovery item (SPEC §19). Only two digital
+  evidence submissions can exist per order because the existing order-level
+  two-receipt cap still applies.
+- **Implemented in migration 006:** payment verification is separate from
+  order fulfillment; approving/rejecting a payment does not advance
+  `orders.status`, write inventory movements, consume/release reservations or
+  change `receipt_attempts`. The unchanged M3/M5 RPCs remain the only
+  implementation of the two-receipt cap, the single 20-minute correction window
+  and second-rejection cancellation; migration 006 calls them.
 
-## Phase 5 — Admin panel and point of sale ⬜
+## Phase 5 — Admin panel and point of sale 🚧
+
+**Progress:** the POS cash-sale, external-cash-registration, verification and
+refund **backend** is implemented in migration 006 (local-only; no UI, no remote
+apply). The admin panel/history UI remains to do. OQ-7 and OQ-11 stay OPEN.
 
 - Dashboard: pending orders, receipts to review, available inventory, sales and
-  recent activity.
-- Walk-in sales (POS) with immediate inventory deduction; external payments
-  recorded against an existing online order without duplicating the sale.
-- Order and payment state transitions validated on the server (SPEC §10);
-  cancellations, partial/total refunds without mutating the original payment
-  record (SPEC §11–12).
-- Sales history, operation history and administrative audit trail.
+  recent activity (UI still to do).
+- **Backend implemented in migration 006 (no UI):** walk-in POS cash sales as
+  one `orders` row with `channel = 'pos'`, server-recomputed prices, immediate
+  FIFO allocation and inventory consumption via the existing
+  `consume_order_reservations` RPC, one approved cash payment component and
+  idempotency by key — no duplicate inventory deduction. Admin cash
+  registration against an existing online order is also implemented.
+- **Backend implemented in migration 006 (no UI):** payment verification and
+  append-only refund recording with idempotency by key, currency copied from
+  the payment, over-refund blocked and payment status becoming
+  `refunded_partial`/`refunded_full`. OQ-7 (refund method value domain) remains
+  OPEN: the method is non-empty free text, no domain invented. Order state
+  transitions stay in their own domain flow (SPEC §10–12).
+- Sales history, operation history and administrative audit trail (UI still to
+  do).
 
 ## Phase 6 — Realtime, communication and settings ⬜
 
@@ -163,8 +214,8 @@ below remains to do.
 
 - Whole cakes made to order (requires production on demand — the current model
   is ready-made portions only).
-- Binance Pay and user-to-user transfers in USDT.
-- Additional payment methods or integrations beyond those listed in SPEC.
+- Additional payment methods or integrations beyond the four already listed in
+  SPEC §5 and implemented in migration 006.
 - Public customer accounts (SPEC explicitly keeps guest checkout).
 
 ## Pending discovery (blocks specific flows, not the architecture)
@@ -181,3 +232,8 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - Commercial policy for orders requiring a delivery quote (reservation timing
   after fee acceptance is resolved in SPEC §6/§8 and DECISIONS #26; the
   commercial terms themselves remain open).
+- Still open after migration 006: OQ-7 (refund method value domain), OQ-11 (POS
+  customer identity), OQ-12 (guest receipt re-view), OQ-4 (BCV rate write path)
+  and OQ-5 (rounding rule), in addition to the Binance identifier/modality and
+  cash-on-delivery items above. None is resolved by the payments module; no
+  conversion or cross-currency "fully paid" rule was invented.

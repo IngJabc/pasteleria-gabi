@@ -3,6 +3,11 @@
 Living checklist. Update the status when a task is actually completed and
 verified — never mark a task done without running its validation.
 
+> **Payments Module naming:** migration `006_payments_and_verification.sql` is
+> the Payments Module backend. Some historical task sections call it
+> **Phase 4**; the roadmap/tasking label for the same scope is **Phase 5**.
+> Both labels refer to the same work; historical headings are kept as written.
+
 ---
 
 ## Phase 0 — Project initialization ✅ (complete)
@@ -289,12 +294,23 @@ Implementation order (each migration ships with its RLS policies; design source:
       calls that RPC; it accepts no order id and writes no tables directly.
       No admin-retry extension, no change to the correction window or the
       24-hour SLA.
-- [ ] **M4 (Phase 4) remaining:** `payments`, `payment_refunds` +
-      `payment-receipts` bucket + verification invariants wired to the M3 RPCs
-      (receipt rejection opens the bounded 20-minute window; second rejection
-      auto-cancels — OQ-14 confirmed).
-- [ ] **M5 (Phase 5):** POS channel validation data (OQ-7/OQ-11 confirmations)
-      and any status-CHECK widenings.
+- [x] **M4 / Phase 4–5 — Payments Module backend:** implemented additively in
+      `supabase/migrations/006_payments_and_verification.sql` (local-only;
+      behaviorally validated on a disposable local PostgreSQL cluster — see the
+      final implementation report for details; **not applied remotely,
+      deployed, committed or pushed**). Adds `public.payments`,
+      `public.payment_refunds`, `receipt_submissions.payment_id`, indexes, RLS
+      and least-privilege grants, a private `payment-receipts` storage bucket
+      with admin SELECT only, audit integration, a `private.require_active_admin`
+      guard and service-role RPCs. Migrations 001–005 are untouched. Stored
+      method/currency pairs are EXACTLY `pago_movil`→VES, `cash_usd`→USD,
+      `binance_pay`→USDT, `binance_transfer`→USDT; verification invariants call
+      the unchanged M3/M5 RPCs (single 20-minute correction window, two-receipt
+      cap, second-rejection cancellation) instead of reimplementing them. No
+      payment/receipt UI.
+- [ ] **M5 (Phase 5) remaining:** POS/refund **UI**, OQ-7 (refund method domain)
+      and OQ-11 (POS customer identity) confirmations, and any status-CHECK
+      widenings. The POS/refund **backend** is already in migration 006.
 - [x] **M6 (Phase 6) — OQ-16 recurring SLA notifications:** implemented in
       `supabase/migrations/005_receipt_sla_notifications.sql` and
       `supabase/worker/sla-worker.mjs` (validated locally, **not applied
@@ -567,15 +583,42 @@ and `npm run build` all passed locally.
       `npm run lint` exit 0 · `npx tsc --noEmit` exit 0 · `npm run build` success.
 
 Explicitly **not** done in Phase 4: migration 004 was **not applied to any
-remote Supabase project**; payments, receipt storage or tracking UI; no remote
-deployment. OQ-16 notifications/scheduler are implemented separately in Phase 6
-and are likewise local-only.
+remote Supabase project**; payment/receipt/tracking **UI** (the payments and
+receipt-storage **backend** is now migration 006, likewise local-only); no
+remote deployment. OQ-16 notifications/scheduler are implemented separately in
+Phase 6 and are likewise local-only.
 
 **Phase 6 / OQ-16 local validation (final):** `npm test` — **143/143 passed**
 (34 new static/behavioral/worker tests vs. the 109-test Phase 4 suite) ·
 `npm run lint` exit 0 (only two pre-existing OQ-17 warnings) ·
 `npx tsc --noEmit` exit 0 · `npm run build` success. No remote migration,
 deployment, secret change, commit or push.
+
+Validation (Phase 5 / Payments Module — migration 006, local only):
+
+- [x] Migration 006 applies additively on top of 001–005 on a **disposable local
+      PostgreSQL cluster**; migrations 001–005 are untouched. Behaviorally
+      validated locally; validation details are in the final implementation
+      report. **Not applied to any remote Supabase project, deployed, committed
+      or pushed.**
+- [x] Tables/columns: `payments`, `payment_refunds`,
+      `receipt_submissions.payment_id`, indexes (including partial unique keys
+      for one pending submission per order and per payment), RLS/forces/grants,
+      private `payment-receipts` bucket with admin SELECT only and no client
+      write policies, audit integration and service-role RPCs.
+- [x] Backend flows covered: guest digital registration with private receipt
+      upload, admin cash registration against an existing online order, admin
+      approve/reject, offline POS cash sale, append-only refund recording and
+      per-currency summary. No UI was added.
+- [x] Boundaries verified locally: declared per-currency amounts only (no
+      cross-currency sum, conversion, "fully paid" decision or auto-fulfillment);
+      verification separate from fulfillment; admin id session-derived and
+      rechecked by `private.require_active_admin` in every mutating RPC; no RPC
+      reads `auth.uid()`; idempotency keys, row locks, deterministic lock order
+      and advisory locks for POS/refund; public errors do not leak SQL details.
+- [x] Open after this work: OQ-7, OQ-11, OQ-12, OQ-4, OQ-5, Binance
+      identifier/modality details and the cash-on-delivery policy. No exact
+      counts are recorded here; see the final implementation report.
 
 Then, per roadmap phase:
 
@@ -597,6 +640,10 @@ Then, per roadmap phase:
       administrator (24 h + 15 min repeats until approve/reject); no automatic
       cancel or inventory release; narrow worker authorized by DECISIONS #1's
       amendment. Validated locally, not applied remotely or deployed.
+- [x] **Phase 4/5 (Payments Module):** migration 006 implements the payments
+      and verification backend described above (four method/currency pairs,
+      per-currency summary, POS cash and refund RPCs, private receipts). Local
+      only; no UI, remote apply, deployment, commit or push.
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

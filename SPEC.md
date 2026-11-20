@@ -133,7 +133,7 @@ El checkout mostrará un aviso indicando que la tarifa será verificada y que el
 
 Los administradores podrán corregir la clasificación y ajustar la tarifa.
 
-Los pedidos que requieran cotización quedarán pendientes de confirmación del importe definitivo. La reserva de inventario durante la espera se regirá por las reglas de reservas de la sección 8; el plazo aplicable a estos pedidos específicos está por confirmar.
+Los pedidos que requieran cotización quedarán pendientes de confirmación del importe definitivo. Mientras se espera la cotización, el inventario permanece reservado sin expiración automática. Solo cuando el cliente acepte explícitamente la tarifa de delivery cotizada se iniciará un nuevo plazo inicial fijo de 20 minutos para la reserva, según la sección 8 (implementado en la Fase 4; el plazo histórico `initial_expires_at` permanece inmutable y la nueva ventana se registra por separado). Ese plazo es de reserva de inventario: no es el plazo de revisión administrativa de 24 horas de la sección 14, ni sustituye o modifica la ventana de corrección de 20 minutos posterior al primer rechazo del comprobante. Los reintentos administrativos no lo extenderán.
 
 ### Retiro presencial
 
@@ -195,15 +195,15 @@ Todos los movimientos conservarán fecha, administrador, producto, cantidad y mo
 
 Los pedidos online reservarán inventario inmediatamente al crearse.
 
-La reserva inicial expirará a los 20 minutos si el cliente no envía el comprobante de pago.
+La reserva inicial expirará a los 20 minutos si el cliente no envía el comprobante de pago. Para pedidos con cotización manual de delivery, la reserva permanece retenida sin expiración automática mientras se espera la cotización, y el plazo inicial de 20 minutos se inicia recién cuando el cliente acepta explícitamente la tarifa cotizada (OQ-17, resuelto e implementado en la Fase 4; `initial_expires_at` se conserva inmutable y la nueva ventana se escribe en `quote_acceptance_expires_at` y se copia en `expires_at`).
 
-Si los administradores rechazan un comprobante enviado, el cliente dispondrá de 15 minutos adicionales para corregirlo y volver a enviarlo. Este rechazo no libera inventario: inicia la ventana de corrección.
+Si los administradores rechazan un comprobante enviado, el cliente dispondrá de 20 minutos adicionales para corregirlo y volver a enviarlo. Este rechazo no libera inventario: inicia la única ventana de corrección. Se permiten como máximo dos comprobantes en total (el original y una corrección); el primer rechazo mantiene la reserva retenida durante la revisión, y el segundo rechazo cancela automáticamente el pedido y libera sus reservas.
 
-El plazo máximo de 24 horas de la sección 14 corresponde a la gestión administrativa de los pedidos entrantes; no es la duración de la reserva de inventario.
+El plazo máximo de 24 horas de la sección 14 corresponde a la revisión administrativa del comprobante; no es la duración de la reserva de inventario. Al superarse, se notifica al administrador responsable cada 15 minutos hasta que apruebe o rechace el comprobante (OQ-16, resuelto; implementación pendiente en la Fase 6). El vencimiento de ese plazo no cancela el pedido ni libera inventario, y no sustituye ni modifica los plazos de reserva de 20 minutos descritos en esta sección. Los reintentos administrativos no extienden ninguno de estos plazos.
 
 El inventario reservado no podrá venderse a otro cliente.
 
-Las reservas se liberán al cancelar o expirar un pedido. Cuando la ventana de corrección venza sin un comprobante válido, la reserva expirará y las unidades volverán a estar disponibles.
+Las reservas se liberan al cancelar (incluido el cancelado automático por un segundo rechazo) o expirar un pedido. Cuando la ventana de corrección venza sin un comprobante válido, la reserva expirará y las unidades volverán a estar disponibles. Los pedidos con cotización manual permanecen reservados mientras se confirma la cotización; la aceptación explícita de la tarifa por el cliente inicia un nuevo plazo inicial de 20 minutos que no puede extenderse mediante reintentos administrativos.
 
 Las operaciones de reserva, venta y liberación deberán ser atómicas e idempotentes.
 
@@ -297,6 +297,7 @@ Se utilizará Supabase Realtime para notificar a ambos administradores cuando:
 - Se cree un pedido online.
 - Se envíe un comprobante.
 - Se produzcan actualizaciones relevantes de pedidos y pagos.
+- Se supere el plazo de 24 horas de revisión de un comprobante (sección 14): se notificará al administrador responsable y se repetirá cada 15 minutos hasta que apruebe o rechace el comprobante, sin cancelar el pedido ni liberar inventario. Ejecuciones simultáneas del proceso de notificación no deben generar avisos duplicados para el mismo vencimiento.
 
 Las notificaciones serán informativas. La fuente de verdad siempre será la base de datos.
 
@@ -308,7 +309,7 @@ El panel permitirá configurar los horarios de atención y preparación.
 
 Los horarios informarán al cliente, pero no impedirán realizar pedidos fuera del horario habitual.
 
-Los administradores tendrán un máximo de 24 horas para gestionar los pedidos entrantes y las operaciones pendientes. Este plazo es operativo y no define la duración de la reserva de inventario (sección 8).
+Los administradores tendrán un máximo de 24 horas desde el envío de un comprobante para revisarlo. Este plazo es operativo y no define la duración de la reserva de inventario (sección 8). Al superarse se notificará al administrador responsable cada 15 minutos hasta que apruebe o rechace el comprobante; no se cancelará el pedido ni se liberará inventario por el vencimiento de este plazo administrativo.
 
 ## 15. Panel administrativo
 
@@ -381,7 +382,7 @@ No se fijará una identidad definitiva hasta que el negocio apruebe una propuest
 - Definir cómo se consulta y actualiza la tasa BCV.
 - Precisar los límites geográficos de la zona norte para la clasificación que hará el cliente.
 - Definir el tratamiento operativo de pedidos con efectivo contra entrega y pagos combinados.
-- Definir la política comercial para pedidos con cotización de delivery.
+- Definir la política comercial para pedidos con cotización de delivery (el plazo de reserva tras la aceptación de la tarifa ya está definido en las secciones 6 y 8; falta la política comercial en sí).
 
 Estos pendientes no impiden avanzar con el diseño visual ni con la arquitectura inicial, pero deberán resolverse antes de implementar los flujos afectados.
 

@@ -116,10 +116,16 @@ Explicitly NOT done in Phase 1A (per instructions):
 
 ## Phase 1A.1 — Inventory reservation lifecycle correction ✅ (complete)
 
-Documentation-only correction against the confirmed business rules: initial
-reservation **20 minutes**; rejected receipt → **one additional 15-minute**
-correction window; the **24-hour** figure is the administrators' operational
-processing deadline, **not** a reservation duration.
+Documentation-only correction against the business rules known at that time:
+initial reservation **20 minutes**; rejected receipt → **one additional
+15-minute** correction window; the **24-hour** figure is the administrators'
+operational processing deadline, **not** a reservation duration.
+
+> **Amendment (M3 reservation/payment-attempt correction, 2026-11-20):** the
+> confirmed rules supersede the 15-minute figure above — the single correction
+> window is now **20 minutes**, at most **two receipts** are allowed, and a
+> **second rejection auto-cancels** the order. See the M3 correction entry
+> below and `docs/DATABASE_DESIGN.md` §6.2/§14.
 
 - [x] Review `SPEC.md`, `docs/DATABASE_DESIGN.md`, `docs/SECURITY_DESIGN.md`,
       `docs/DECISIONS.md`, `TASKS.md` and grep the whole tree for stale
@@ -176,6 +182,13 @@ Open questions introduced by this correction (see `docs/DATABASE_DESIGN.md`
 single-window repeat-rejection policy · OQ-15 confirm hold-while-under-review ·
 OQ-16 how (or whether) the 24-hour admin SLA is enforced.
 
+**Later status:** OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are all
+**resolved in documentation** — OQ-16 by DECISIONS #25 (notification-only 24 h
+review SLA) and OQ-17 by DECISIONS #26 (new 20-minute reservation window on
+explicit acceptance of the quoted fee). OQ-17 is now **implemented and validated
+locally in Phase 4** (`supabase/migrations/004_quote_acceptance.sql`); OQ-16
+remains pending in Phase 6.
+
 ---
 
 ## Phase 1B — Migrations, catalog and admin access 🚧
@@ -197,8 +210,9 @@ Not blocking Phase 1B (tracked for later phases): OQ-3 delivery-zone boundaries
 (affects zone *content*), OQ-4/OQ-5 BCV rate source and rounding rule
 (Phase 4), OQ-6 Pago Móvil data (Phase 4), OQ-7 refund methods (Phase 5),
 OQ-8 schedules (Phase 6), OQ-9…OQ-12 confirmations at their phase,
-OQ-13…OQ-16 reservation-window confirmations (Phases 3–4, see
-`docs/DATABASE_DESIGN.md` §14).
+the implementation of OQ-16 (Phase 6 SLA notifications); OQ-17 is implemented
+locally in Phase 4. OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are
+resolved as rules (see `docs/DATABASE_DESIGN.md` §14).
 
 Implementation order (each migration ships with its RLS policies; design source:
 `docs/DATABASE_DESIGN.md`, policies: `docs/SECURITY_DESIGN.md`):
@@ -220,23 +234,117 @@ Implementation order (each migration ships with its RLS policies; design source:
       disposable local PostgreSQL cluster (behavioral + contract tests).
       **Not applied to any remote project.** Scope notes: `order_id` and sale
       movements are deferred to M3 (no `orders` table yet);
-      `inventory_reservations` and all timing logic (20 min / 15 min / 24 h)
+      `inventory_reservations` and all timing logic (20 min initial / 20 min correction / 24 h admin SLA)
       are **not** here — the reservations FK references `orders`.
       OQ-9 stays open — `inventory_movements.admin_id` is nullable per design
       §6.3 but migration 002 always writes it (null = system semantics not
       confirmed); no admin UI in M2.
-- [ ] **M3 (Phase 3):** `orders`, `order_items`, `inventory_reservations`,
+- [x] **M3 (Phase 3):** `orders`, `order_items`, `inventory_reservations`,
       `cancellation_requests`, `exchange_rates` + tracking-token hashing +
-      checkout/tracking RPCs (reservations created with
-      `expires_at = created_at + 20 min`; hold/expiry semantics per
-      OQ-13/OQ-15).
-- [ ] **M4 (Phase 4):** `payments`, `payment_refunds` + `payment-receipts`
-      bucket + verification invariants (receipt rejection opens the bounded
-      15-minute correction window — OQ-14 confirmation before merge).
+      checkout/tracking RPCs — implemented in
+      `supabase/migrations/003_orders_and_reservations.sql`, validated on a
+      disposable local PostgreSQL cluster (behavioral + contract tests).
+      **Not applied to any remote project.** Scope notes: 8 service-role-only
+      RPCs (`create_online_order`, `hold_order_reservations`,
+      `open_order_correction_window`, `release_expired_reservations`,
+      `consume_order_reservations`, `release_order_reservations`,
+      `get_order_for_tracking`, `request_order_cancellation`) plus the
+      documented §11 replacement of `get_product_stock` (availability now
+      subtracts active, unexpired reservations). `inventory_movements.order_id`
+      FK/index added with `orders`. No payments/receipts/tracking UI (M4+),
+      no audit_log rows (no administrative action exists yet — M4 writes
+      `payment.verify`), no 24-hour SLA in the schema (DECISIONS #24; OQ-16 is
+      now resolved as notification-only by DECISIONS #25 — implementation
+      pending, no schema change). OQ-9 is exercised by `sale` movements
+      (`admin_id` NULL = system) but stays open; OQ-4/OQ-5 unchanged.
+- [x] **M3 reservation/payment-attempt correction (in place within M3):** applied
+      directly to `003_orders_and_reservations.sql` per the
+      confirmed rules: 20-minute initial deadline; receipt submitted → held
+      during admin review; at most **two receipts total** with **one 20-minute
+      correction window**; second rejection auto-cancels the order and releases
+      every active reservation (no movement, no physical-stock change);
+      quote-pending deliveries stay reserved from creation. Implemented via
+      `orders.receipt_attempts INTEGER NOT NULL DEFAULT 0 CHECK (0..2)`,
+      guarded atomic increment in `hold_order_reservations` and the
+      attempts-aware `open_order_correction_window`. Resolves OQ-13 (quote
+      case), OQ-14 and OQ-15; OQ-17 was raised here, resolved by DECISIONS #26
+      and implemented separately in Phase 4 by migration
+      `004_quote_acceptance.sql`. Migrations 001/002/003 untouched by the M4
+      work.
+- [x] **M4 / Phase 4 — OQ-17 quote-acceptance transition:** implemented in
+      `supabase/migrations/004_quote_acceptance.sql` (validated locally, **not
+      applied remotely**): `orders.quote_accepted_at` and
+      `inventory_reservations.quote_acceptance_expires_at` (new fixed
+      20-minute window copied to the operative `expires_at`), with the
+      historical `initial_expires_at` left **immutable**; service-role RPCs
+      `accept_quote_fee` (internal) and `accept_quote_fee_for_tracking` (the
+      customer's only entry point, resolving the SHA-256 hash of the private
+      tracking token), reservations → orders locking, idempotent replay with no
+      revival of closed reservations, one `order.quote_accept` audit row per
+      first acceptance in the same transaction, and an extended PII-free
+      tracking projection. The server action
+      `src/features/orders/accept-quote.ts` only validates a 64-hex token and
+      calls that RPC; it accepts no order id and writes no tables directly.
+      No admin-retry extension, no change to the correction window or the
+      24-hour SLA.
+- [ ] **M4 (Phase 4) remaining:** `payments`, `payment_refunds` +
+      `payment-receipts` bucket + verification invariants wired to the M3 RPCs
+      (receipt rejection opens the bounded 20-minute window; second rejection
+      auto-cancels — OQ-14 confirmed).
 - [ ] **M5 (Phase 5):** POS channel validation data (OQ-7/OQ-11 confirmations)
       and any status-CHECK widenings.
 - [ ] **M6 (Phase 6):** Realtime publication + `store_settings` shape for
-      schedules (OQ-8).
+      schedules (OQ-8) **plus the OQ-16 recurring SLA notifications** (24 h
+      after receipt submission, every 15 min until approve/reject, deduplicated
+      across overlapping executions, no auto-cancel/release).
+
+---
+
+## Phase 1A.2 — Final OQ resolution ✅ (complete)
+
+Confirmed business rules recorded in `docs/DECISIONS.md` **#25** and **#26**;
+`SPEC.md` §6/§8/§13/§14/§19, `docs/DATABASE_DESIGN.md` §6.2/§7.1/§11/§14,
+`docs/SECURITY_DESIGN.md` §8, `docs/ROADMAP.md`, `TASKS.md` and `README.md`
+updated accordingly. **At that time** no SQL, migration, application code or
+remote resource was touched; M1/M2/M3 behavior and migration history are
+unchanged. The later M4 entry above supersedes this documentation-only status
+for OQ-17 (migration 004); OQ-16 is still documentation-only.
+
+- [x] **OQ-16 (DECISIONS #25) — resolved as a rule:** 24-hour administrative
+      receipt-review SLA from receipt submission; notify the responsible
+      administrator when exceeded, repeat every 15 minutes until approve or
+      reject, suppress duplicates from overlapping worker executions; never
+      auto-cancel the order or release inventory. Informational only, not a
+      reservation duration and not a schema column.
+- [x] **OQ-17 (DECISIONS #26) — resolved as a rule:** manual-quote orders stay
+      reserved with no automatic expiration while the quote is pending; the
+      customer's explicit acceptance of the quoted fee starts a new fixed
+      20-minute initial reservation window. It is not the 24-hour review SLA
+      and does not modify the 20-minute post-rejection correction window;
+      administrative retries never extend it.
+- [x] Documentation-only scope verified **at the time**: no migration 004, no
+      changes to 001/002/003 or to `src/`, no remote apply. Migration 004 and
+      the server action now implement OQ-17 as recorded in the M4 entry above.
+
+**Implementation status (Phase 4 OQ-17 done in M4; OQ-16 still PENDING):**
+
+- [x] **Phase 4 — OQ-17 quote-acceptance transition:** implemented in migration
+      004 and validated locally (not applied remotely). The customer's explicit
+      acceptance via the private tracking token writes a new fixed 20-minute
+      window in `quote_acceptance_expires_at` and copies it to `expires_at`;
+      `initial_expires_at` remains immutable with its creation-time value. The
+      service-role RPCs are idempotent, ignore admin retries, leave the
+      correction window and SLA untouched, audit `order.quote_accept` in the
+      same transaction and expose no client write path.
+- [ ] **Phase 6 — OQ-16 recurring SLA notifications:** scheduled detection of
+      receipts past their 24-hour review deadline; notify the responsible
+      administrator, repeat every 15 minutes until approve/reject, deduplicate
+      with a stable key (receipt/submission + due interval + recipient) across
+      overlapping worker executions; no order/status/reservation/inventory
+      writes; tests for dedupe, stop-on-decision and no-auto-cancel. Requires
+      deciding the scheduler mechanism (revisit DECISIONS #1's
+      no-background-workers scope) and how the responsible administrator is
+      identified.
 
 Validation (Phase 1B / M1 — executed locally, 2026-11-14):
 
@@ -328,6 +436,126 @@ PostgREST exposure of the new RPCs, `auth.uid()` from real JWTs, and applying
 migration 002 to the remote project (deliberately deferred — **no remote
 changes were made**).
 
+Validation (Phase 3 / M3 — executed locally, 2026-11-19):
+
+Migration 003 was validated the same way as M1/M2: applied on top of 001 + 002
+to a **throwaway local PostgreSQL 17 cluster** (Supabase stub, ephemeral
+loopback port, torn down afterwards) via
+`src/infrastructure/database/local-postgres.ts`:
+
+- [x] Migrations 001 + 002 + 003 apply cleanly, each in a single transaction
+      (`psql -1 -v ON_ERROR_STOP=1` → exit 0).
+- [x] All five M3 tables: RLS enabled **and** forced; exactly 6 policies (5
+      admin ALL via `(select private.is_admin())` + the documented anon SELECT
+      on `exchange_rates` only — no anon policy on orders/order_items/
+      reservations/cancellation_requests).
+- [x] Checkout: server-side recompute (prices from `products`, fee from
+      `delivery_zones`, `requires_quote` zones snapshot a NULL fee), line
+      snapshots, 64-hex token returned once with only `sha256(token)` stored,
+      `bcv_rate_*`/`total_ves`/`rounding_rule` NULL (OQ-4/OQ-5).
+- [x] Atomicity: invalid input, unknown/inactive product, unknown zone and
+      insufficient stock all roll back with no order, no items, no
+      reservations (named SQLSTATEs: 22023 / P0002 / P0001).
+- [x] FIFO allocation across batches (`production_date`, `id`) with the
+      documented `available = remaining − active&unlapsed reservations` rule;
+      `get_product_stock` now subtracts reservations (M2 placeholder replaced
+      through the documented §11 `create or replace` path).
+- [x] Lifecycle: initial `expires_at = initial_expires_at = created_at + 20
+      min` (CHECK-enforced); `hold` counts receipt #1 (0 → 1) → `expires_at =
+      NULL` (never lapses); rejection #1 opens the ONE 20-min window once
+      (repeat call re-uses the same deadline — never extended) and **never**
+      releases; receipt #2 (1 → 2) is held again; rejection #2 atomically
+      cancels the order and releases every active reservation (`closed_at`
+      set, availability restored once, zero movements, no physical-stock
+      change) and is idempotent on repeats; quote-pending deliveries are
+      created held and survive lazy expiry; lazy
+      `release_expired_reservations` flips lapsed rows + pending orders to
+      `expired` with no stock movement; `consume` → `sale` movement (negative,
+      `order_id` set, `admin_id` NULL) + `remaining_quantity` decrement;
+      `release` frees availability without touching physical stock.
+- [x] Two-receipt cap: `receipt_attempts` starts at 0, is NOT NULL and
+      CHECK-constrained 0..2; a third submission (forced attempts = 2, direct
+      SQL attempt = 3 blocked by the named CHECK) raises P0001 before any write;
+      a repeat hold on an already-held order consumes no attempt.
+- [x] Idempotency and invalid transitions: repeat consume/release/hold/window
+      are safe no-ops or documented re-assertions; rejecting a receipt that was
+      never submitted (attempts = 0) raises P0001; hold after auto-cancel is a
+      state violation; consume-after-release, release-after-consume,
+      hold/window on a closed order, unknown order (P0002) and null arguments
+      (22023) all rejected — verified via the SQLSTATE captured inside
+      PL/pgSQL.
+- [x] Concurrency: four parallel checkouts of 3 units against 5 — exactly one
+      succeeds (3 reserved, 2 free, no oversell); two parallel consumes of the
+      same order — one deducts once, the other returns the idempotent 0 (one
+      movement only); two parallel final rejections — exactly one cancels and
+      releases (returns 1), the other returns 0 (no double release, no
+      movement).
+- [x] Tracking: PII-free projection (no name/phone/address/token), wrong
+      tokens return NULL, stored hash equals `sha256(token)` and never the
+      token; cancellation requests are pending/source=`tracking`/trimmed and
+      visible through tracking; duplicates → 23505, unknown token → P0002.
+- [x] RLS/grant boundaries: anon and authenticated non-admin read 0 rows and
+      fail every write with an RLS error; admin reads all rows and the
+      `updated_at` trigger fires; `exchange_rates` is anon-readable but
+      admin-writable; all 8 RPCs have EXECUTE for `service_role` only (0 for
+      `anon`/`authenticated`, enforced even for administrators) and every
+      function is `SECURITY INVOKER` with `search_path = ''`.
+- [x] Schema objects verified (`pg_constraint`, `pg_indexes`, `pg_trigger`,
+      `information_schema`): 21 named constraints (incl.
+      `orders_receipt_attempts_check`), 15 indexes (incl. 3 partial
+      + the partial unique pending-cancellation index),
+      `inventory_movements.order_id` column with `ON DELETE SET NULL` FK and
+      index, `orders_updated_at` trigger, `receipt_attempts` `NO|0`.
+- [x] Static contract (`orders-contract.test.ts`): exact table/policy/function
+     /grant/index scope, no M4+ leakage (no payment/receipt tables, uploads or
+      verification; `receipt_attempts` is the only receipt identifier),
+      only 20-minute intervals present, migration order 001 → 002 → 003.
+- [x] SQL audit: all state changes stay inside the RPCs' single transaction;
+      locks always taken reservations → orders (never the reverse), so
+      submissions/rejections/consumptions/cleanups serialise; RLS, policies and
+      EXECUTE grants unchanged from the original M3 scope; no sale movement or
+      physical-stock write on rejection or release; no remote apply.
+
+npm suite (Phase 3 / M3, incl. the in-place correction): `npm test` 73/73
+passed at that point (5 files: 26 M3 behavioral + 11 M3 static contract +
+36 M1/M2; **109/109 after the Phase 4 / M4 tests**) · `npm run lint` exit 0 ·
+`npm run build` success (`/`, `/admin` static) · `npx tsc --noEmit` exit 0
+(before and after build).
+
+Explicitly **not** verified locally (requires real Supabase infrastructure):
+PostgREST exposure of the new RPCs, `auth.uid()` from real JWTs, and applying
+migration 003 to the remote project (deliberately deferred — **no remote
+changes were made**; migration 001/002 files untouched, nothing committed).
+
+Validation (Phase 4 / M4 — OQ-17, executed locally, 2026-11-20):
+
+Migration 004 was validated on a throwaway local PostgreSQL cluster using the
+same Supabase stub as M1/M2/M3; `npm test`, `npm run lint`, `npx tsc --noEmit`
+and `npm run build` all passed locally.
+
+- [x] Migration `004_quote_acceptance.sql` applies cleanly on top of 001–003;
+      migrations 001–003 are untouched and no commit/push was made.
+- [x] New nullable columns `orders.quote_accepted_at` and
+      `inventory_reservations.quote_acceptance_expires_at`; the four-case
+      `expires_at` CHECK (held NULL → correction window → quote-acceptance
+      window → immutable `initial_expires_at`) verified. `initial_expires_at`
+      keeps its historical `created_at + 20 min` value and is never re-armed or
+      rewritten.
+- [x] `accept_quote_fee` / `accept_quote_fee_for_tracking`: reservations →
+      orders locking, token hash resolution on the server, pending quote-only
+      guards, idempotent replay, no revival of closed reservations, and one
+      PII-free `order.quote_accept` audit row in the same transaction; both RPCs
+      are service-role-only, `SECURITY INVOKER` with pinned `search_path`.
+- [x] `get_order_for_tracking` exposes `quote_accepted_at`,
+      `quote_acceptance_expires_at` and `quote_acceptance_available` with no PII;
+      the server action validates a 64-hex token and calls only the RPC.
+- [x] `npm test` — **109/109 passed** (36 new tests vs. the 73-test M3 suite) ·
+      `npm run lint` exit 0 · `npx tsc --noEmit` exit 0 · `npm run build` success.
+
+Explicitly **not** done in Phase 4: migration 004 was **not applied to any
+remote Supabase project**; no OQ-16 notifications/scheduler, payments, receipt
+storage or tracking UI; no remote deployment.
+
 Then, per roadmap phase:
 
 - [ ] Generate TypeScript database types and add the `Database` generic to the
@@ -338,6 +566,14 @@ Then, per roadmap phase:
       (server-side check against `administrators`).
 - [ ] Admin product CRUD (+ `audit_log` entries).
 - [ ] Catalog/product seed once B3 resolves.
+- [x] **Phase 4 (OQ-17):** quote-acceptance transition implemented in migration
+      004: one fixed 20-minute acceptance window in
+      `quote_acceptance_expires_at`, `initial_expires_at` immutable, no
+      admin-retry extension, no impact on the SLA or correction window (details
+      in the M4 entry above).
+- [ ] **Phase 6 (OQ-16):** deduplicated recurring SLA notifications to the
+      responsible administrator (24 h + 15 min repeats until approve/reject);
+      no automatic cancel or inventory release; scheduler decision pending.
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

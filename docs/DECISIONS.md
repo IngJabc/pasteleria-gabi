@@ -4,7 +4,11 @@ Key architectural decisions, in lightweight ADR form: *Context → Decision →
 Consequences*. Superseding a decision should be done by adding a new entry here
 (status: accepted, replaces #N). Entries #1–#11 were made in Phase 0; entries
 #12–#23 were made in Phase 1A (database & security design); entry #24 was made
-in Phase 1A.1 (reservation lifecycle correction).
+in Phase 1A.1 (reservation lifecycle correction); entries #25–#26 resolve the
+final M3 open questions OQ-16 and OQ-17. #25 remains documentation-only
+(implementation pending in Phase 6); #26 is implemented in Phase 4 by
+`supabase/migrations/004_quote_acceptance.sql` (validated locally, not applied
+remotely).
 
 ---
 
@@ -359,11 +363,12 @@ correction window; release happens solely on authorized cancellation,
 consumption on completion, expiry on deadline lapse. The window is granted at
 most once per reservation, so repeated rejection/resubmission cannot extend it
 indefinitely. The 24-hour admin deadline stays out of the schema entirely —
-it is a dashboard SLA computed from `orders.created_at`.
+it is a dashboard SLA (its clock is refined by #25 below: 24 hours from receipt
+submission, not from order creation).
 
 **Consequences:** The schema distinguishes initial expiry from the correction
-window and the held state keeps the 15-minute window meaningful when
-verification is slow. Four open questions are recorded before Phase 3/4
+window and the held state keeps the correction window meaningful when
+verification is slow. Open questions were recorded before Phase 3/4
 implementation (DATABASE_DESIGN §14): OQ-13 clock behavior for cash/quote
 orders, OQ-14 confirm the single-window repeat-rejection policy, OQ-15 confirm
 the hold-while-under-review rule, OQ-16 how (or whether) the 24-hour SLA is
@@ -371,3 +376,99 @@ enforced. Trade-off: three deadline columns instead of one — accepted for
 audit clarity and indexed queries; all are written only by server-side RPCs.
 SPEC §8 and §14 were amended to match this decision (documentation-only
 correction, Phase 1A.1).
+
+**Amendment (M3 reservation/payment-attempt correction, 2026-11-20):** the
+confirmed business rules supersede the 15-minute figure above. The single
+correction window is **20 minutes**; **at most two receipts** are allowed
+(original + one correction, counted by `orders.receipt_attempts`); the first
+rejection opens the window and keeps the inventory reserved; a **second
+rejection automatically cancels the order and releases every reservation**
+(no movement, no physical-stock change). A submitted receipt holds the deadline
+for the whole admin review, and quote-pending deliveries stay reserved from
+creation. Implemented **in place** in migration 003 (no new migration);
+OQ-13 (quote case), OQ-14 and OQ-15 are resolved, and the countdown restart
+after quote confirmation becomes OQ-17. SPEC §8 was updated accordingly.
+
+**Amendment (final OQ resolution, same date):** OQ-16 and OQ-17 are now resolved
+by confirmed business rules and recorded as decisions **#25** and **#26**
+below. Neither changes this decision's reservation window or anything already
+implemented in migrations 001–003: the 24-hour figure stays an administrative
+review SLA with notifications only (never automatic cancellation or inventory
+release), and the 20-minute window that starts after quote acceptance is a
+*new initial inventory reservation* clock, distinct from both the review SLA
+and the 20-minute receipt-correction window.
+
+---
+
+## 25. Administrative receipt-review SLA: notify only, never auto-cancel — status: accepted (resolves OQ-16)
+
+**Context:** SPEC §14 gives administrators 24 hours to manage incoming orders;
+OQ-16 asked how that deadline should be enforced. Automatic order expiry would
+conflict with the reservation rules of #24 (a receipt is held during review,
+and only a second rejection cancels) and with the "database is the source of
+truth, notifications are informative" rule in SPEC §13.
+
+**Decision:** Administrators have **24 hours from receipt submission** to
+review a payment receipt. Once that deadline is exceeded, the **responsible
+administrator is notified**; the notification is **repeated every 15 minutes**
+until the receipt is **approved or rejected**. SLA expiration is **purely
+informational**: it never cancels the order, expires the order, releases
+inventory, changes a reservation deadline, or writes an inventory movement.
+Overlapping executions of the notification worker must not produce duplicate
+notifications for the same receipt and due interval (idempotency by dedupe
+key). This decision does not select the scheduler mechanism.
+
+**Consequences:** The review SLA is fully independent of the 20-minute
+reservation clock and of the 20-minute correction window; all three can run
+without interfering. The existing #24 schema does not gain an SLA column or an
+automatic branch; #18's lazy expiry remains the only inventory-deadline
+mechanism. Implementation is **pending** (Phase 6): it needs a scheduled
+notification mechanism (revisiting the "no background workers" scope of #1),
+a way to identify the responsible administrator, deduplicated dispatch, and
+tests for overlap/no-cancel behavior. No SQL, migration or application change
+is part of this documentation-only decision.
+
+## 26. Manual delivery quote: acceptance starts a new 20-minute reservation — status: accepted (resolves OQ-17)
+
+**Context:** M3 creates reservations for manual-quote deliveries already HELD
+(`expires_at = NULL`) so the pending quote cannot expire the inventory (OQ-13).
+OQ-17 asked when the 20-minute countdown should start once the quote is
+resolved. Counting from the quote decision or resuming the original creation
+clock would punish the customer for administrator latency and blur three
+different deadlines.
+
+**Decision:** While the manual delivery quote is pending, the order **remains
+reserved with no automatic expiration**. Only when the **customer explicitly
+accepts the quoted delivery fee** does a **new, fixed 20-minute initial
+reservation window** start. That window is an **inventory reservation**
+deadline: it is **not** the 24-hour administrative review SLA (#25) and it
+does **not** replace or modify the single 20-minute correction window granted
+after a first receipt rejection (#24). Administrative retries must **not**
+extend it.
+
+**Consequences:** The existing M1/M2/M3 behavior and migration history are
+unchanged; migration 003 deliberately encodes no acceptance transition. Phase 4
+adds the transition in a **separate** migration without rewriting that history:
+`initial_expires_at` stays immutable with its original creation-time value and
+the fixed 20-minute acceptance window lives in the new
+`inventory_reservations.quote_acceptance_expires_at` column, copied to
+`expires_at`. Consumers must read that column for the new window — it is **not**
+a re-arm or an admin extension of `initial_expires_at`. Manual-quote orders stay
+held indefinitely until explicit customer acceptance, as in M3.
+
+**Implementation (Phase 4):** `supabase/migrations/004_quote_acceptance.sql`
+adds `orders.quote_accepted_at` and
+`inventory_reservations.quote_acceptance_expires_at`, plus the four-case
+`expires_at` invariant (NULL/held → correction window → quote-acceptance window
+→ immutable `initial_expires_at`). Compared with the documentation-only draft
+of this decision, the initial deadline is **no longer re-armed or rewritten**:
+the new window uses its own column. Two service-role-only RPCs are added:
+`accept_quote_fee` (internal primitive) and `accept_quote_fee_for_tracking`
+(customer access exclusively through the SHA-256 hash of the private tracking
+token; an order id is never authorization). The acceptance flow locks
+reservations → orders, is idempotent, never revives closed reservations and
+writes one PII-free `order.quote_accept` audit row in the same transaction. The server action
+`src/features/orders/accept-quote.ts` validates a 64-hex token and calls only
+that RPC. Validated locally (`npm test`, lint, `tsc`, build; 109 tests);
+migration 004 has **not** been applied remotely and OQ-16 remains pending
+Phase 6.

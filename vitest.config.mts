@@ -18,6 +18,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],
+    // Database migration suites spin up a disposable PostgreSQL cluster and
+    // issue many short psql invocations per case; the default 5s is too tight.
+    testTimeout: 30_000,
     clearMocks: true,
   },
 });

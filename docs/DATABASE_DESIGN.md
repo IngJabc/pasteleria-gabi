@@ -12,8 +12,24 @@ M2 implemented in `supabase/migrations/002_inventory_foundation.sql` — §6.1
 (`inventory_batches`), §6.3 (`inventory_movements`, without `order_id`: deferred
 to M3 with `orders`) and the §11 functions `create_inventory_batch`,
 `adjust_inventory`, `get_product_stock` — same local validation, **not applied
-remotely yet**. §6.2 (`inventory_reservations`), sections 7–10 (orders,
-payments, …) and the §11 functions not named above remain design only. Every
+remotely yet**. M3 implemented in
+`supabase/migrations/003_orders_and_reservations.sql` — §6.2
+(`inventory_reservations`), the §6.3 `order_id` column/FK/index, §7.1/§7.2
+(`orders`, `order_items`), §9.1 (`cancellation_requests`), §10.1
+(`exchange_rates`) and the §11 functions `create_online_order`,
+`hold_order_reservations`, `open_order_correction_window`,
+`release_expired_reservations`, `consume_order_reservations`,
+`release_order_reservations`, `get_order_for_tracking`,
+`request_order_cancellation`, plus the reservations-aware replacement of
+`get_product_stock` (design §11 upgrade path) — same local validation (69
+tests), **not applied remotely yet**. Phase 4 / M4 implemented the OQ-17
+transition in `supabase/migrations/004_quote_acceptance.sql`: the two new
+nullable columns, the four-case `expires_at` invariant (§6.2), the two new
+service-role RPCs and the extended PII-free tracking projection (§11) —
+validated locally (109 tests total), **not applied remotely**, with migrations
+001–003 untouched. Section 8 (payments), the exchange-rate write path
+(§10.1 — OQ-4), the checkout/tracking **UI**, OQ-16 notifications and the
+remaining §11 functions of later phases stay design only. Every
 table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
@@ -89,6 +105,7 @@ erDiagram
         numeric total_usd
         numeric bcv_rate_ves
         numeric total_ves
+        timestamptz quote_accepted_at
     }
     order_items {
         bigint id PK
@@ -121,6 +138,7 @@ erDiagram
         text status
         timestamptz initial_expires_at
         timestamptz correction_window_ends_at
+        timestamptz quote_acceptance_expires_at
         timestamptz expires_at
     }
     exchange_rates {
@@ -295,12 +313,38 @@ batches oldest-first (`production_date`, then `id`).
 
 **Purpose:** an online order reserves its batches the moment it is created;
 reserved units are invisible to other buyers until the reservation is consumed
-(sale), released (authorized cancel), or expires. Deadlines are short and
-customer-driven (SPEC §8 "Reservas"): the **initial reservation expires after
-20 minutes** if no payment receipt is submitted, and a **rejected receipt
-grants one additional 15-minute correction window**. The 24-hour figure
-(SPEC §14) is the administrators' operational deadline for managing incoming
-orders — **not** a reservation duration (DECISIONS #24).
+(sale), released (authorized or automatic cancellation), or expires. Deadlines
+are short and customer-driven (SPEC §8 "Reservas" as corrected by the confirmed
+M3 reservation/payment-attempt rules): the **initial reservation expires after
+20 minutes** if no payment receipt is submitted; a **rejected receipt grants
+exactly one 20-minute correction window** for the single allowed resubmission;
+and a **second rejection automatically cancels the order and releases every
+reservation**. At most **two receipts total** (original + one correction) can
+be submitted. Manual-quote deliveries stay held while the quote is pending and
+get a **new fixed 20-minute window** when the customer explicitly accepts the
+fee (OQ-17 / DECISIONS #26, **implemented in migration 004**). That new window
+is stored in a separate column; the historical `initial_expires_at` keeps its
+creation-time value and is **never re-armed or rewritten**. The 24-hour figure
+(SPEC §14) is an **administrative receipt-review SLA with notifications only**
+(OQ-16 / DECISIONS #25, pending implementation) — never a reservation
+duration and never a trigger to cancel or release inventory.
+
+**Status (M3 + M4):** migration `003` implemented the table with its original
+CHECK (`expires_at IS NULL OR expires_at =
+coalesce(correction_window_ends_at, initial_expires_at)`), the three indexes,
+RLS, and the reservation RPCs (`create_online_order`,
+`hold_order_reservations`, `open_order_correction_window`,
+`release_expired_reservations`, `consume_order_reservations`,
+`release_order_reservations`), plus
+`orders.receipt_attempts INTEGER NOT NULL DEFAULT 0 CHECK (0..2)` to count
+submissions and enforce the two-receipt cap. Migration `004` extends that
+design additively (two new nullable columns, the four-case `expires_at`
+invariant below, two new RPCs, the extended tracking projection and an index on
+`orders.quote_accepted_at`); it **does not** rewrite `initial_expires_at` or
+change migrations 001–003. OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are
+all **resolved in documentation**; OQ-17 is **implemented and validated
+locally** in migration 004 (**not applied remotely**), while the OQ-16
+notification job remains pending Phase 6 work in `TASKS.md`/`docs/ROADMAP.md`.
 
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
@@ -309,11 +353,22 @@ orders — **not** a reservation duration (DECISIONS #24).
 | `batch_id` | bigint | no | FK `inventory_batches` on delete restrict |
 | `quantity` | integer | no | `CHECK (quantity > 0)` |
 | `status` | text | no | default `active`; `CHECK (status IN ('active','consumed','released','expired'))` |
-| `initial_expires_at` | timestamptz | no | `created_at + 20 min` (SPEC §8); immutable — records the **initial** deadline even after a correction window moves the operative one |
-| `correction_window_ends_at` | timestamptz | yes | set **once**, when a receipt rejection opens the correction window: `rejected_at + 15 min` (SPEC §8); null if never granted — distinguishes the correction window from the initial expiry |
-| `expires_at` | timestamptz | yes | current **operative** deadline (materialized for simple queries/indexes); `NULL` = **held**, i.e. no deadline is running (receipt awaiting verification, or reservation secured after approval). Invariant: `expires_at IS NULL OR expires_at = coalesce(correction_window_ends_at, initial_expires_at)`. Written only by server-side reservation/payment RPCs — never by a client |
+| `initial_expires_at` | timestamptz | no | `created_at + 20 min` for ordinary orders (SPEC §8); records the **initial** deadline even after a correction window moves the operative one. **Immutable in every phase**: M4 never re-arms or rewrites it (it keeps its historical creation-time `+20 min` value) — the acceptance deadline lives in `quote_acceptance_expires_at` instead |
+| `correction_window_ends_at` | timestamptz | yes | set **once**, when the FIRST receipt rejection opens the single correction window: `rejection_time + 20 min` (confirmed M3 rule); later rejections re-use it and never extend it; null if never granted — distinguishes the correction window from the initial expiry. M4 takes precedence over the acceptance window when both are present |
+| `quote_acceptance_expires_at` | timestamptz | yes | **M4 (OQ-17):** set **once** by the customer's explicit fee acceptance through the private tracking token: `acceptance_time + 20 min`; copied into `expires_at` as the new operative deadline. Null until acceptance; admin retries never change it; `initial_expires_at` is untouched |
+| `expires_at` | timestamptz | yes | current **operative** deadline (materialized for simple queries/indexes); `NULL` = **held**, i.e. no deadline is running (manual quote pending, receipt awaiting verification, or reservation secured after approval). M4 invariant, checked in precedence order: `expires_at IS NULL OR (case when correction_window_ends_at is not null then expires_at = correction_window_ends_at when quote_acceptance_expires_at is not null then expires_at = quote_acceptance_expires_at else expires_at = initial_expires_at end)`. Written only by server-side reservation/payment RPCs — never by a client |
 | `created_at` | timestamptz | no | |
 | `closed_at` | timestamptz | yes | when consumed/released/expired |
+
+- **Four-case `expires_at` invariant (migration 004, precedence order):**
+  1. `expires_at IS NULL` → **held** (no clock running);
+  2. `correction_window_ends_at` present → `expires_at =
+     correction_window_ends_at` (single post-rejection window);
+  3. otherwise `quote_acceptance_expires_at` present → `expires_at =
+     quote_acceptance_expires_at` (new 20-minute window on explicit fee
+     acceptance);
+  4. otherwise → `expires_at = initial_expires_at` (the original, **immutable**
+     creation-time deadline, never re-armed).
 
 - **Availability rule:** `available(batch) = remaining_quantity − Σ(quantity of
   active reservations where (expires_at IS NULL OR expires_at > now()))`.
@@ -326,38 +381,70 @@ orders — **not** a reservation duration (DECISIONS #24).
   `status = 'expired'` and sets `closed_at`. Expiry never touches
   `remaining_quantity` — physical stock changes only through a matching
   `inventory_movements` row.
-- **A rejection never releases inventory:** a rejected receipt only moves the
-  reservation from *held* to *running* with the 15-minute window
-  (`expires_at = correction_window_ends_at`). Release happens solely on an
-  authorized cancellation; consumption on completion; expiry when the deadline
-  lapses (SPEC §8).
-- **The correction window is bounded:** it is granted at most **once** per
-  reservation — a second rejection re-uses the recorded
-  `correction_window_ends_at` and never extends it, so repeated
-  rejection/resubmission cannot create unlimited extensions (policy confirmed
-  as OQ-14 before Phase 4).
-- **Hold semantics:** submitting a receipt sets `expires_at = NULL` while the
-  administrator verifies (the customer has acted; the clock must not run during
-  review). This interpretation follows from the confirmed rules (20 min for the
-  customer, 24 h for the admin) and is flagged as OQ-15; the nullable column
-  supports it without any schema change.
+- **The FIRST rejection never releases inventory:** it only moves the
+  reservation from *held* to *running* with the one 20-minute correction window
+  (`expires_at = correction_window_ends_at`). Rejections never add receipt
+  attempts. Release happens on an authorized cancellation, on completion
+  (consumption), on expiry when the deadline lapses, **or automatically on the
+  SECOND rejection** (SPEC §8 as corrected).
+- **At most two receipts, one bounded window:**
+  `orders.receipt_attempts` counts submissions 0 → 1 → 2; the first rejection
+  opens the single 20-minute window and repeated rejections re-use the recorded
+  `correction_window_ends_at` without ever extending it. A third submission is
+  rejected. A **second rejection** (attempts = 2) atomically sets
+  `orders.status = 'canceled'` and flips every active reservation to
+  `released` + `closed_at`: availability is restored once, with no movement and
+  no physical-stock change (OQ-14 confirmed).
+- **Hold semantics (OQ-15 confirmed):** submitting a receipt sets
+  `expires_at = NULL` while the administrator verifies (the customer has acted;
+  the clock must not run during review) and counts the attempt — except a
+  repeated hold on an already-held order, which is an idempotent no-op that
+  consumes no attempt. Rejecting a receipt that was never submitted is invalid.
+- **Quote-pending deliveries (OQ-13 resolved; OQ-17 / DECISIONS #26 implemented
+  in migration 004):** rows for manual-quote zones are created HELD
+  (`expires_at = NULL`) so inventory stays reserved without automatic expiry
+  while the quote is pending. Only the customer's **explicit acceptance of the
+  quoted fee**, authorized by the private tracking token, starts a **new,
+  fixed 20-minute reservation window**, written once in
+  `quote_acceptance_expires_at` and copied to `expires_at`; administrative
+  retries never extend it and `initial_expires_at` is never re-armed. That clock
+  is independent of the 24-hour review SLA and of the 20-minute correction
+  window. Orders that never upload a receipt (cash on delivery) keep the plain
+  20-minute initial clock.
+- **24-hour review SLA (OQ-16 / DECISIONS #25, implementation pending):** the
+  deadline starts at receipt submission and only produces notifications to the
+  responsible administrator (then every 15 minutes until approve/reject). It
+  never changes `status`, `expires_at`, reservations, or `remaining_quantity`;
+  overlapping notification executions must be deduplicated.
 
 **Lifecycle and state consistency (event → reservation → payment → order):**
 
 | Event | Reservation effect | Payment state | Order state |
 | --- | --- | --- | --- |
-| Online order created | FIFO batches allocated; `expires_at = created_at + 20 min` | — | `pending` |
-| Receipt submitted | held: `expires_at = NULL` | `pending` → `in_review` | `pending` |
-| Receipt **rejected** | window opens: `expires_at = correction_window_ends_at = rejected_at + 15 min` — **no inventory released** | `rejected` | stays `pending` (SPEC §10: order status independent of payment status) |
-| Receipt resubmitted inside the window | held again (`expires_at = NULL`); window **not** re-armed | new/updated component `pending`/`in_review` | `pending` |
+| Online order created | FIFO batches allocated; `expires_at = created_at + 20 min`; manual-quote deliveries created HELD (`expires_at = NULL`) | — | `pending` |
+| Manual quote pending (OQ-17, M3 behavior kept by M4) | stays HELD (`expires_at = NULL`): no automatic expiration | — | `pending` |
+| Customer **explicitly accepts** quoted fee (OQ-17 — **implemented in migration 004**, local only) | a NEW fixed 20-minute window is written once in `quote_acceptance_expires_at = expires_at = acceptance_time + 20 min`; the historical `initial_expires_at` is **immutable**, admin retries never extend the new window, and a correction window (if already set) keeps precedence; independent of the SLA | — | `pending` |
+| Receipt #1 submitted | held: `expires_at = NULL`; `receipt_attempts` 0 → 1 | `pending` → `in_review` | `pending` |
+| 24-hour review SLA exceeded (OQ-16 — **pending implementation**, no migration yet) | **no change at all**: no cancel, no release, no deadline change | notify the responsible administrator, then every 15 min until approve/reject; dedupe overlapping executions | `pending` (unchanged) |
+| Receipt #1 **rejected** | ONE 20-minute window opens: `expires_at = correction_window_ends_at = rejection_time + 20 min`; **no inventory released**; attempts stay 1 | `rejected` | stays `pending` (SPEC §10: order status independent of payment status) |
+| Receipt #2 (correction) submitted inside the window, held during review | held again (`expires_at = NULL`); attempts 1 → 2; window **not** re-armed | new/updated component `pending`/`in_review` | `pending` |
+| Receipt #2 **rejected** | automatic cancel: all active reservations `released` + `closed_at` (no movement, no stock change); availability restored once | final `rejected` | → `canceled` automatically |
 | Window lapses without a valid resubmission | lazily excluded from availability → cleanup sets `expired` | stays `rejected` | → `expired` |
 | Receipt approved | held (`expires_at = NULL`) until completion | `approved` | `pending → confirmed` (normal flow) |
 | Cancellation authorized (SPEC §11) | `released`; units available again immediately | untouched (refund recorded separately) | `canceled` |
 | Order completed | `consumed` → `sale` movement | `approved` | `completed` |
 
-The nullable `expires_at` also covers orders that never upload a receipt (cash
-on delivery) or wait for a manual delivery quote — their hold/expiry timing is
-an open question (OQ-13), not a schema change.
+The nullable `expires_at` also covers cash-on-delivery orders that never upload
+a receipt: they keep the plain 20-minute initial clock and expire if it lapses.
+Three reservation clocks plus the administrative SLA coexist and must not be
+conflated: the immutable 20-minute `initial_expires_at` (still the operative
+deadline for ordinary orders), the separate fixed 20-minute
+`quote_acceptance_expires_at` window for manual-quote orders (migration 004),
+the separate 20-minute correction window after the first rejection, and the
+24-hour review SLA, which only emits notifications. The OQ-17 row is now
+**implemented in migration 004** (validated locally, not applied remotely);
+the OQ-16 notification row remains **not implemented** (Phase 6). No payment,
+scheduler or tracking UI was added with the OQ-17 work.
 
 - **Indexes:** `inventory_reservations_order_id_idx`, partial
   `inventory_reservations_active_batch_idx (batch_id) WHERE status = 'active'`,
@@ -378,7 +465,7 @@ responsible admin.
 | `type` | text | no | `CHECK (type IN ('entry','sale','adjustment'))` |
 | `quantity` | integer | no | **signed**: positive = increase, negative = decrease; `CHECK (quantity <> 0)`; `CHECK (type <> 'entry' OR quantity > 0)` |
 | `reason` | text | yes | `CHECK (type <> 'adjustment' OR reason IS NOT NULL)` — adjustments require a motive (SPEC §8) |
-| `order_id` | bigint | yes | FK `orders` on delete set null — links sale movements to their order. **M3:** the column, FK and `inventory_movements_order_id_idx` are deliberately absent from migration `002` (no `orders` table yet) and are added together with `orders` |
+| `order_id` | bigint | yes | FK `orders` on delete set null — links sale movements to their order. **M3:** the column, FK and `inventory_movements_order_id_idx` are deliberately absent from migration `002` (no `orders` table yet) and are added together with `orders` — done in migration 003 |
 | `admin_id` | uuid | yes | FK `administrators` on delete set null — **null = system-initiated** (online sale/reservation consumption). See open question OQ-9 |
 | `created_at` | timestamptz | no | |
 
@@ -407,6 +494,13 @@ a tracking token and delivery/pickup; walk-in sales (`channel = 'pos'`, SPEC §9
 reuse the same table so payments, inventory movements and the audit trail have a
 single spine instead of duplicated tables. (DECISIONS #16)
 
+**Status (M3 + M4):** implemented in migration `003` — table, the row-level
+channel CHECKs, all five indexes, the `updated_at` trigger and RLS (admin ALL
+only; guests reach orders exclusively through the service-role RPCs, never
+PostgREST). Migration `004` adds the nullable `quote_accepted_at` column and
+its partial index. POS rows, payments and status-transition logic stay in their
+phases.
+
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
 | `id` | bigint identity | no | PK (internal identifier, SPEC §7) |
@@ -427,6 +521,8 @@ single spine instead of duplicated tables. (DECISIONS #16)
 | `bcv_rate_at` | timestamptz | yes | timestamp of that rate (SPEC §4) |
 | `total_ves` | numeric(14,2) | yes | `CHECK >= 0`; VES total calculated with the snapshot (SPEC §4) |
 | `rounding_rule` | text | yes | **which** rule was applied (SPEC §4) — the rule itself is undefined, see OQ-5 |
+| `receipt_attempts` | integer | no | default 0; `CHECK (receipt_attempts BETWEEN 0 AND 2)` — number of receipt submissions (original + at most one correction), incremented atomically by `hold_order_reservations`; the second rejection cancels the order. M3 correction (confirmed rules) |
+| `quote_accepted_at` | timestamptz | yes | **M4 (OQ-17):** set **once** by the customer's explicit fee acceptance through the private tracking token; serves as the idempotency marker and audit timestamp. Null while the quote is pending. Partial descending index `orders_quote_accepted_at_idx` |
 | `created_at` / `updated_at` | timestamptz | no | |
 
 **Row-level CHECKs (all same-row, no cross-table logic):**
@@ -448,11 +544,21 @@ through RLS-validated paths). SPEC §10 keeps order status independent of paymen
 status; there is no denormalized "paid" flag — payment coverage is derived (§11).
 
 The `pending → expired` transition fires when the order's reservation deadline
-lapses without a held or approved payment (§6.2); a receipt rejection alone
-never expires or cancels an order. The 24-hour administrator deadline
-(SPEC §14) is an **operational SLA** surfaced in the dashboard (age computed
-from `created_at`) — it is deliberately not a column and not a reservation
-duration; whether it has any automatic enforcement is OQ-16.
+lapses without a held or approved payment (§6.2). A **first** rejection alone
+never expires or cancels an order — it only opens the single 20-minute
+correction window; the **second** rejection (`receipt_attempts = 2`) cancels the
+order automatically and releases its reservations (§6.2, OQ-14 confirmed). The
+24-hour administrator deadline (SPEC §14) is an **operational SLA** surfaced in
+the dashboard — it is deliberately not a column and not a reservation duration.
+OQ-16 is resolved (DECISIONS #25): the clock starts at receipt submission (not
+at order creation); when it is exceeded the responsible administrator is
+notified, then every 15
+minutes until approval/rejection, with duplicate suppression across overlapping
+worker executions; it **never** cancels the order or releases inventory. Manual
+quote acceptance starts a new initial reservation window (§6.2, DECISIONS #26),
+not an administrative deadline: implemented in migration 004 via the separate
+`quote_acceptance_expires_at` column, with `initial_expires_at` immutable.
+OQ-16 remains pending implementation (Phase 6).
 
 - **Indexes:** `orders_status_created_at_idx (status, created_at DESC)`
   (dashboard queues), partial `orders_pending_idx (created_at DESC) WHERE status = 'pending'`,
@@ -478,6 +584,8 @@ changes when the catalog changes (SPEC §4 requires historical product prices).
 - Line total is `unit_price_usd * quantity` (exact decimal math, computed in
   queries/application — no stored column to drift).
 - **Indexes:** `order_items_order_id_idx`, `order_items_product_id_idx`.
+- **Status (M3):** implemented in migration `003` — the table, both indexes and
+  RLS (admin ALL); rows are written only by `create_online_order`.
 
 ## 8. Payments and verification
 
@@ -567,6 +675,10 @@ it, and resolution records who decided.
   by the customer.
 - **Indexes:** partial `cancellation_requests_pending_idx (created_at DESC) WHERE status = 'pending'`,
   `cancellation_requests_order_id_idx`, `cancellation_requests_resolved_by_idx`.
+- **Status (M3):** implemented in migration `003` — table, CHECKs, the partial
+  unique pending index, the three indexes and RLS (admin ALL, no anon policy).
+  Guests create rows only through `request_order_cancellation` (service role);
+  resolution side effects stay in server code (Phase 4/5).
 
 ## 10. Exchange rates, audit
 
@@ -589,6 +701,9 @@ discovery item** (SPEC §19); this design only defines where rates live.
 - **Note:** orders store the applied rate **inline** (snapshot columns, §7.1)
   with **no FK** to this table — a historical order must keep its financial
   snapshot even if rate rows are ever edited or pruned.
+- **Status (M3):** the table, CHECKs, unique `observed_at` and RLS (admin ALL
+  plus the documented anon SELECT) are implemented in migration `003`; no write
+  path exists yet — rate ingestion is OQ-4 (Phase 4).
 
 ### 10.2 `audit_log`
 
@@ -600,7 +715,7 @@ payment verifications, status changes, refunds, settings changes).
 | --- | --- | --- | --- |
 | `id` | bigint identity | no | PK |
 | `admin_id` | uuid | yes | FK `administrators` on delete set null; null = system/service-role action |
-| `action` | text | no | naming convention `domain.verb` (`product.update`, `payment.verify`, `inventory.batch_create`, `inventory.adjust`, `order.status_change`, `refund.create`, `settings.update`) |
+| `action` | text | no | naming convention `domain.verb` (`product.update`, `payment.verify`, `inventory.batch_create`, `inventory.adjust`, `order.status_change`, `order.quote_accept` — written by the M4 acceptance RPC with `admin_id NULL`, `refund.create`, `settings.update`) |
 | `entity_type` | text | no | e.g. `order`, `payment`, `product` |
 | `entity_id` | text | no | text so any PK shape fits |
 | `data` | jsonb | yes | context: `{"before": …, "after": …}` as applicable |
@@ -618,14 +733,44 @@ No table duplicates another table's state. Everything derived is computed:
 | Name | Kind | Audience | Purpose |
 | --- | --- | --- | --- |
 | `create_inventory_batch(p_product_id, p_initial_quantity, p_production_date)` | function | authenticated admins (internal `is_admin()` check) | atomic **entry**: inserts the new batch (remaining = initial), its `entry` movement and the `inventory.batch_create` audit row in one transaction — implemented in migration 002 (Phase 2) |
-| `get_product_stock(p_product_id)` | function | service role (server-rendered storefront) | available / reserved / remaining aggregates — keeps `production_date` away from the public entirely (SPEC §8); implemented in migration 002 with `available = remaining` and `reserved = 0` until M3 introduces reservations |
-| `create_online_order(...)` | function | service role only | validates products/zones, recomputes all totals from `products`, allocates FIFO batches, writes snapshots + reservations (`expires_at = created_at + 20 min`), returns `{order_id, tracking_token}` once (Phase 3) |
-| `release_expired_reservations()` | function | service role only | lazy expiry cleanup: flips reservations past their operative deadline (20 min initial / 15 min correction window) to `expired` (Phase 3) |
-| `consume_order_reservations(p_order_id)` | function | service role only | converts reservations into `sale` movements on completion (Phase 2/3) |
+| `get_product_stock(p_product_id)` | function | service role (server-rendered storefront) | available / reserved / remaining aggregates — keeps `production_date` away from the public entirely (SPEC §8); migration 002 shipped it with `available = remaining` and `reserved = 0`, and migration **003** replaces it (`create or replace`, same signature) so availability subtracts active, unexpired reservations per §6.2 |
+| `create_online_order(...)` | function | service role only | validates products/zones, recomputes all totals from `products`, allocates FIFO batches, writes snapshots + reservations (`expires_at = created_at + 20 min`, or `NULL` for held manual-quote deliveries), returns `{order_id, tracking_token}` once — implemented in migration 003 (Phase 3) |
+| `hold_order_reservations(p_order_id)` | function | service role only | receipt submitted: increments `orders.receipt_attempts` (max 2; third submission raises P0001) and suspends the operative deadline (`expires_at = NULL`, OQ-15 confirmed) for every active reservation; a repeat on an already-held order is an idempotent no-op that consumes no attempt — implemented in migration 003 |
+| `open_order_correction_window(p_order_id)` | function | service role only | receipt rejected: with 1 attempt, sets `correction_window_ends_at = expires_at = rejection_time + 20 min` **once** (repeat rejections never extend it); with 2 attempts, cancels the order and releases all active reservations atomically (no movement); with 0 attempts, raises P0001; a repeat after cancellation returns 0 — OQ-14 confirmed, implemented in migration 003 |
+| `release_expired_reservations()` | function | service role only | lazy expiry cleanup: flips reservations past their operative deadline (20 min initial / one 20 min correction window) to `expired` and expires the pending order — implemented in migration 003 (Phase 3) |
+| `consume_order_reservations(p_order_id)` | function | service role only | converts reservations into `sale` movements on completion (negative quantity, `order_id` set, `admin_id` NULL = system — OQ-9) — implemented in migration 003 (Phase 3) |
+| `release_order_reservations(p_order_id)` | function | service role only | authorized cancellation: flips active reservations to `released`, restoring availability without touching physical stock — implemented in migration 003 |
 | `adjust_inventory(p_batch_id, p_quantity, p_reason)` | function | authenticated, internal `is_admin()` check | atomic signed **adjustment** with movement row: `FOR UPDATE` on the batch serialises concurrent callers, guards `remaining ∈ [0, initial]`, requires a reason — implemented in migration 002 (Phase 2) |
-| `get_order_for_tracking(p_token)` | function | service role only | hashes the token, looks up the order, returns a **PII-free projection** (status, items, totals, timestamps, cancellation state) — see SECURITY_DESIGN §6 |
-| `request_order_cancellation(p_token, p_reason)` | function | service role only | inserts a `cancellation_requests` row without touching the order (Phase 3) |
+| `get_order_for_tracking(p_token)` | function | service role only | hashes the token, looks up the order, returns a **PII-free projection** (status, items, totals, timestamps, cancellation state) — see SECURITY_DESIGN §6; implemented in migration 003 and **extended in 004** with `quote_accepted_at`, `quote_acceptance_expires_at` and `quote_acceptance_available` (still no name/phone/address/token) |
+| `request_order_cancellation(p_token, p_reason)` | function | service role only | inserts a `cancellation_requests` row without touching the order — implemented in migration 003 (Phase 3) |
+| `accept_quote_fee(p_order_id)` | function | service role only (**internal server primitive**, not a customer authorization path) | OQ-17, migration 004: locks reservations → orders, validates pending online quote delivery with no receipt and a confirmed fee, then writes `quote_acceptance_expires_at = expires_at = acceptance_time + 20 min` **once**, sets `orders.quote_accepted_at` and inserts one `order.quote_accept` audit row in the same transaction; idempotent replay returns the original values without writing or reviving closed reservations; `initial_expires_at` is never touched |
+| `accept_quote_fee_for_tracking(p_token)` | function | service role only (called by the server action) | OQ-17, migration 004: the customer's **only** entry point; resolves the order from `sha256(token)` on the server and delegates to `accept_quote_fee` — no order id, name or phone is accepted as authorization |
+| `acceptQuoteFee({ trackingToken })` | server action (`src/features/orders/accept-quote.ts`) | customer via the private tracking link | validates a 64-hex tracking token and calls only `accept_quote_fee_for_tracking` through the service-role client; accepts no order id and writes no table directly (SECURITY_DESIGN §6/§8) |
 | `order_payment_summary` | view (`security_invoker = true`) | authenticated admins (anon revoked) | per-order approved/pending/refunded totals for the dashboard |
+
+**Implemented mechanism (decision #26 — Phase 4 / migration 004, local only):**
+
+- **Quote-acceptance transition:** the server action validates the private
+  64-hex tracking token and calls the service-role-only
+  `accept_quote_fee_for_tracking`, which hashes the token and delegates to
+  `accept_quote_fee`. The latter writes a new fixed 20-minute deadline **once**
+  in `quote_acceptance_expires_at` and copies it to `expires_at`, leaving
+  `initial_expires_at` **immutable** with its historical creation-time value.
+  It ignores administrative retries, leaves the 24-hour review SLA and the
+  correction window untouched, is idempotent under repeats (no revival of
+  closed reservations), and writes `order.quote_accept` audit data with no PII
+  in the same transaction. No client write path and no remote apply.
+
+**Pending mechanism (decision #25 — Phase 6, no migration exists yet):**
+
+- **SLA notification job:** a scheduled dispatch that detects receipts
+  whose 24-hour review deadline has passed, notifies the responsible
+  administrator, repeats every 15 minutes until approval/rejection, and uses a
+  stable idempotency key (receipt/submission, due interval, recipient) so
+  overlapping worker executions cannot send duplicates. It must never write an
+  order status, reservation deadline, inventory quantity or movement. Choosing
+  the scheduler mechanism requires revisiting the "no background workers"
+  constraint of DECISIONS #1; no such mechanism exists today.
 
 **Realtime (Phase 6):** `orders`, `payments` and `cancellation_requests` will be
 added to the `supabase_realtime` publication; Realtime respects the same RLS
@@ -663,7 +808,7 @@ Nothing blocks adding made-to-order whole cakes later:
 - New payment methods (Binance) only widen the `method` CHECK; new
   administrators are new `administrators` rows; more products are data.
 
-## 14. Open questions (genuine gaps — not invented here)
+## 14. Open questions and confirmations (status register)
 
 | ID | Question | Blocks |
 | --- | --- | --- |
@@ -675,12 +820,13 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-6 | Shape of Pago Móvil receiver data (SPEC §19) | `store_settings.payment_instructions` structure (Phase 4) |
 | OQ-7 | Allowed refund methods (SPEC §12 requires the field, not the value list) | `payment_refunds.method` CHECK (Phase 5) |
 | OQ-8 | Shape of attention/preparation schedules (SPEC §14) | `store_settings.business_hours` structure (Phase 6) |
-| OQ-9 | SPEC §8 says every movement keeps an "administrator", but automated online-sale movements have no acting admin — proposed: `admin_id` nullable with null = system | **Still open.** Migration 002 shipped the column nullable (design §6.3) but always writes an admin id; confirm before M3 introduces sale movements that could be null |
+| OQ-9 | SPEC §8 says every movement keeps an "administrator", but automated online-sale movements have no acting admin — proposed: `admin_id` nullable with null = system | **Still open.** Migration 002 shipped the column nullable (design §6.3) but always writes an admin id; migration 003 now writes `sale` movements with `admin_id` NULL (system semantics) — confirm before admin reporting relies on the distinction |
 | OQ-10 | Should the storefront display per-product stock (SPEC §3 lists "inventario disponible" ambiguously)? | Whether `get_product_stock` output is shown publicly (design supports it either way) |
 | OQ-11 | Are walk-in (POS) sales recorded without customer identity? Proposed: yes — all customer columns nullable for `channel = 'pos'` | Phase 5 |
 | OQ-12 | May a guest re-view their own uploaded receipt from the tracking page? Proposed: yes, via a short-lived signed URL issued by server code after token validation (no storage-policy change) | Phase 4 tracking/payment UI |
-| OQ-13 | Does the 20-minute initial reservation clock apply to orders that never upload a receipt (cash on delivery) or that wait for a manual delivery quote (SPEC §6/§8)? Proposed: the clock tracks *customer obligations* — it holds while waiting on the admin/quote and runs only when the customer owes a receipt | Phase 3 checkout reservation logic (schema already supports it via nullable `expires_at`) |
-| OQ-14 | Repeat rejection policy: confirm the proposal that the 15-minute correction window is granted **once** per reservation and later rejections never extend it (bounded, no unlimited extensions). Alternative (needs explicit approval): each rejection re-arms 15 minutes | Phase 4 receipt-rejection RPC behavior |
-| OQ-15 | Confirm the hold rule: a submitted receipt awaiting verification suspends the reservation deadline (`expires_at = NULL`) until an administrator acts — required for the 15-minute window to be meaningful when verification is slow | Phase 3/4 reservation RPCs (behavior only; no schema change) |
-| OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | Phase 6 dashboard/notifications |
+| OQ-13 | Does the 20-minute initial reservation clock apply to orders that never upload a receipt (cash on delivery) or that wait for a manual delivery quote (SPEC §6/§8)? | **Resolved by the confirmed M3 rules:** quote-pending deliveries are created held (`expires_at = NULL`) and keep the inventory reserved while the quote is confirmed; cash-on-delivery orders keep the plain 20-minute initial clock. The follow-up sub-question was recorded as **OQ-17** and is now resolved by DECISIONS #26 (new 20-minute window on explicit fee acceptance) |
+| OQ-14 | Repeat rejection policy and the number of allowed receipts | **Resolved by the confirmed M3 rules:** at most two receipts total (original + one correction), the single correction window is 20 minutes and never extended by repeated rejections, and a second rejection auto-cancels the order and releases all reservations. Implemented in migration 003 (`orders.receipt_attempts`, `open_order_correction_window`) |
+| OQ-15 | Confirm the hold rule: a submitted receipt awaiting verification suspends the reservation deadline (`expires_at = NULL`) until an administrator acts | **Resolved by the confirmed M3 rules:** migration 003's `hold_order_reservations` suspends the deadline and counts the submission (idempotent on repeats); the receipt stays held throughout admin review |
+| OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved by confirmed rules (DECISIONS #25):** notify the responsible administrator once the 24-hour receipt-review deadline is exceeded, repeat every 15 minutes until approve/reject, suppress duplicates from overlapping worker executions, and **never** auto-cancel the order or release inventory. **Implementation pending in Phase 6** notifications (§11); no schema/status change in M3 and none in migration 004 |
+| OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally, not applied remotely): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
 

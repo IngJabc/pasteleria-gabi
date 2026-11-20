@@ -44,40 +44,79 @@ auth and admin CRUD items below are not started.
 
 **Progress:** M2 — database foundation only — is implemented in
 `supabase/migrations/002_inventory_foundation.sql`: `inventory_batches`,
-`inventory_movements` (append-only, `order_id` deferred to M3 with `orders`),
+`inventory_movements` (append-only, `order_id` added by M3 together with `orders`),
 RLS, and the `create_inventory_batch` / `adjust_inventory` / `get_product_stock`
 RPCs, validated on a local PostgreSQL cluster (36 tests). **Not applied
 remotely yet.** Reservations (§6.2), checkout-time stock deduction, sale
-movements, timing (20 min / 15 min / 24 h) and the admin screens below remain
-to do.
+movements and the 20-minute timing (initial deadline + single correction
+window) arrived with **M3** (migration 002 itself is unchanged); the 24-hour
+administrative review SLA stays out of the schema and is notification-only
+(DECISIONS #24/#25), and the admin screens below remain to do.
 
 - Batches (product, initial/remaining quantity, production date, responsible
   admin), FIFO allocation, stock movements (entries, sales, adjustments) with
   audit fields.
-- Online orders reserve stock atomically (20-minute initial expiry plus a
-  15-minute receipt-correction window — DECISIONS #24; idempotent operations,
-  PostgreSQL functions/RPC for critical paths).
+- Online orders reserve stock atomically (20-minute initial expiry plus ONE
+  20-minute receipt-correction window, at most two receipts, second rejection
+  auto-cancels — DECISIONS #24 as amended by the M3 correction; idempotent
+  operations, PostgreSQL functions/RPC for critical paths).
 - Admin screens for batches, movements and adjustments (production date is
   administrative only and never shown in the store).
 
-## Phase 3 — Checkout, orders and tracking ⬜
+## Phase 3 — Checkout, orders and tracking 🚧
+
+**Progress:** M3 — database foundation only — is implemented in
+`supabase/migrations/003_orders_and_reservations.sql`: `orders`,
+`order_items`, `inventory_reservations`, `cancellation_requests`,
+`exchange_rates`, the `inventory_movements.order_id` FK/index, RLS and the
+eight service-role-only RPCs (checkout with server-side recompute and
+deadlock-free FIFO reservation, receipt hold with a two-receipt counter, single
+20-minute correction window, automatic cancel + release on the second rejection,
+lazy expiry, consume → `sale` movement, release, PII-free tracking, guest
+cancellation requests), validated on a local PostgreSQL cluster (73 tests total
+at that point, 109 after Phase 4/M4 incl. M1/M2). **Not applied remotely yet.**
+The guest checkout / tracking / cancellation **UI** and the Phase 4 payment
+workflow remain to do. OQ-13 (quote case), OQ-14, OQ-15, **OQ-16 and OQ-17 are
+all resolved in documentation** (DECISIONS #24–#26). OQ-17 is **implemented in
+Phase 4** (`supabase/migrations/004_quote_acceptance.sql`, local only): a new
+fixed 20-minute acceptance window in `quote_acceptance_expires_at`, with
+`initial_expires_at` immutable. OQ-16 (24-hour SLA notifications) is still
+pending in Phase 6; neither changes M1/M2/M3 or their migrations.
 
 - Guest checkout (no mandatory registration): customer name, WhatsApp phone,
   delivery/pickup, address and references, optional instructions.
 - **Server-side** recalculation of subtotal, delivery fee and total; inventory
   re-check; client prices are never trusted.
 - Delivery zones per SPEC §6 (north zone free, rest of city $5, outside the city
-  manual quote — reservation timing while a quote is pending is OQ-13).
+  manual quote). While the quote is pending the reservation is held with no
+  automatic expiry (OQ-13); the customer's explicit acceptance of the quoted fee
+  starts a new fixed 20-minute initial reservation window (OQ-17 / DECISIONS
+  #26) — implemented in Phase 4 by migration 004 (local only), with `initial_expires_at`
+   left immutable.
 - Order entity with private tracking link (random token, hash stored) so
   customers can follow their order without an account; cancellation request from
   the tracking page.
 
-## Phase 4 — Payments ⬜
+## Phase 4 — Payments 🚧
+
+**Progress:** the OQ-17 quote-acceptance transition is implemented in
+`supabase/migrations/004_quote_acceptance.sql` and validated locally (109 tests
+total); **not applied to any remote Supabase project**. The payment workflow
+below remains to do.
 
 - Pago Móvil (VES) with receipt upload to a **private** Storage bucket; receipts
   are evidence, never automatic confirmation.
 - Manual verification workflow (pending → in review → approved/rejected) with
   the verifying administrator recorded.
+- **Implemented (OQ-17 / DECISIONS #26):** server-side quote-acceptance
+  transition. The customer's explicit acceptance through the private tracking
+  token is hashed (SHA-256) and resolved on the server; a service-role RPC
+  writes a new fixed 20-minute deadline **once** in
+  `inventory_reservations.quote_acceptance_expires_at` and copies it to the
+  operative `expires_at`. The historical `initial_expires_at` stays immutable;
+  administrative retries never extend the window, the correction window and
+  24-hour SLA are untouched, and the operation is idempotent and audited
+  (`order.quote_accept`, no PII/token in the payload). No client write path.
 - Cash in USD (including "amount given" for change) and combined payments; every
   component registered individually; idempotency against duplicate payments.
 - USD pricing snapshots per order: prices, subtotal, delivery, total, applied
@@ -100,6 +139,12 @@ to do.
 - Supabase Realtime notifications for both administrators (new order, new
   receipt, relevant order/payment updates); database remains the source of
   truth.
+- **Pending implementation (OQ-16 / DECISIONS #25):** recurring receipt-review
+  SLA notifications — 24 hours after receipt submission, notify the responsible
+  administrator, repeat every 15 minutes until approve/reject, deduplicate
+  overlapping worker executions, and never cancel the order or release
+  inventory. Requires a scheduler decision (revisit DECISIONS #1's no-background-workers
+  scope) and tests for overlap/dedupe and no-auto-cancel.
 - Prepared WhatsApp deep links (no WhatsApp Business API in this release).
 - Store settings: business address for pickup, attention/preparation hours
   (informative, orders accepted 24/7).
@@ -125,4 +170,6 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - How the BCV rate is queried and stored.
 - Exact geographic limits of the "north zone" delivery classification.
 - Operating policy for cash-on-delivery and combined payments.
-- Commercial policy for orders requiring a delivery quote.
+- Commercial policy for orders requiring a delivery quote (reservation timing
+  after fee acceptance is resolved in SPEC §6/§8 and DECISIONS #26; the
+  commercial terms themselves remain open).

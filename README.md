@@ -5,22 +5,26 @@ portions, with a private administrative panel for two administrators.
 
 **Status: Phase 1 complete and applied to production — M2 (inventory
 foundation), M3 (orders & inventory reservations, including the in-place
-reservation/payment-attempt correction) and the Phase 4 OQ-17 quote-acceptance
-transition implemented in `supabase/migrations/002_inventory_foundation.sql`,
-`supabase/migrations/003_orders_and_reservations.sql` and
-`supabase/migrations/004_quote_acceptance.sql` and validated locally
-(109 tests), not yet applied to any remote Supabase project** (see
+reservation/payment-attempt correction), the Phase 4 OQ-17 quote-acceptance
+transition and the Phase 6 OQ-16 receipt-review SLA implemented in
+`supabase/migrations/002_inventory_foundation.sql`,
+`supabase/migrations/003_orders_and_reservations.sql`,
+`supabase/migrations/004_quote_acceptance.sql` and
+`supabase/migrations/005_receipt_sla_notifications.sql` and validated locally
+(143 tests), not yet applied to any remote Supabase project** (see
 [`TASKS.md`](./TASKS.md)). M3 reserves stock for 20 minutes, holds it while a
 submitted receipt is reviewed, allows at most two receipts with one 20-minute
 correction window, and auto-cancels on the second rejection. The final open
 questions are resolved in [`docs/DECISIONS.md`](./docs/DECISIONS.md) (#25/#26):
-the 24-hour review SLA only triggers deduplicated administrator notifications
-(no auto-cancel/release) and remains **pending in Phase 6**, while explicit
-acceptance of a manual delivery quote **is implemented in Phase 4**: a
-private-token, service-role RPC writes one fixed 20-minute window in
-`quote_acceptance_expires_at` and copies it to `expires_at`, leaving the
-historical `initial_expires_at` immutable. Migration 004 has not been applied
-remotely. No business features are running; the pages are still placeholders.
+the 24-hour review SLA now triggers deduplicated in-app notifications for every
+active administrator every 15 minutes until that receipt is approved/rejected
+(no auto-cancel/release), through migration 005 and the dedicated
+`supabase/worker/sla-worker.mjs`; explicit acceptance of a manual delivery
+quote **is implemented in Phase 4**: a private-token, service-role RPC writes
+one fixed 20-minute window in `quote_acceptance_expires_at` and copies it to
+`expires_at`, leaving the historical `initial_expires_at` immutable. Migrations
+004 and 005 have not been applied remotely and the worker is not deployed. No
+business features are running; the pages are still placeholders.
 The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
@@ -32,10 +36,11 @@ The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 - Zod (validation), Vitest (tests), ESLint (flat config)
 - Deployed on Vercel
 
-Architecture: **modular monolith** — no Express, Strapi, microservices or
-background workers. The pending recurring SLA notifications will require a
-future scheduler decision (see DECISIONS #25). See
-[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+Architecture: **modular monolith** — no Express, Strapi or microservices. The
+only scheduled backend component is the narrow OQ-16 receipt-SLA worker
+(`supabase/worker/sla-worker.mjs`), authorized by the OQ-16-only amendment to
+DECISIONS #1; it calls one service-role RPC and has no business-state write
+path. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -71,6 +76,7 @@ is created in a later phase — see [`docs/ROADMAP.md`](./docs/ROADMAP.md)).
 | `npm run typecheck` | Run `tsc --noEmit` (requires a prior `npm run build`/`next typegen` so generated route types exist) |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Run Vitest in watch mode |
+| `npm run worker:sla` | Run the OQ-16 SLA worker once installed as a scheduled process (needs `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; optional `SLA_POLL_MS`/`SLA_SHUTDOWN_TIMEOUT_MS`) |
 
 ## Testing
 
@@ -128,9 +134,9 @@ build and render placeholder pages only — no database calls are made.
 | Document | Contents |
 | --- | --- |
 | [`SPEC.md`](./SPEC.md) | Functional specification (source of truth, Spanish) |
-| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phases and future requirements (OQ-17 implemented locally in Phase 4; OQ-16 pending in Phase 6) |
+| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phases and future requirements (OQ-17 implemented locally in Phase 4; OQ-16 implemented locally in Phase 6) |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Layers, folder responsibilities, security invariants |
-| [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | Tables, columns, relationships, indexes, ER diagram (design; M1–M3 + M4/OQ-17 implemented) |
-| [`docs/SECURITY_DESIGN.md`](./docs/SECURITY_DESIGN.md) | Roles, access boundaries, RLS/storage policies and OQ-17 token authorization (design; M1–M4 implemented) |
+| [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | Tables, columns, relationships, indexes, ER diagram (design; M1–M4 + OQ-16 implemented locally) |
+| [`docs/SECURITY_DESIGN.md`](./docs/SECURITY_DESIGN.md) | Roles, access boundaries, RLS/storage policies, OQ-17 token authorization and OQ-16 SLA boundaries (design; M1–M4 + OQ-16 implemented locally) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | Key architectural decisions and their rationale |
 | [`TASKS.md`](./TASKS.md) | Checklist of completed and upcoming tasks |

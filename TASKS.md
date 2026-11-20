@@ -185,9 +185,10 @@ OQ-16 how (or whether) the 24-hour admin SLA is enforced.
 **Later status:** OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are all
 **resolved in documentation** — OQ-16 by DECISIONS #25 (notification-only 24 h
 review SLA) and OQ-17 by DECISIONS #26 (new 20-minute reservation window on
-explicit acceptance of the quoted fee). OQ-17 is now **implemented and validated
-locally in Phase 4** (`supabase/migrations/004_quote_acceptance.sql`); OQ-16
-remains pending in Phase 6.
+explicit acceptance of the quoted fee). OQ-17 is **implemented and validated
+locally in Phase 4** (`supabase/migrations/004_quote_acceptance.sql`); OQ-16 is
+**implemented and validated locally in Phase 6** (`005_receipt_sla_notifications.sql`
+plus `supabase/worker/sla-worker.mjs`). Neither is applied remotely.
 
 ---
 
@@ -209,10 +210,10 @@ items further down have not started.
 Not blocking Phase 1B (tracked for later phases): OQ-3 delivery-zone boundaries
 (affects zone *content*), OQ-4/OQ-5 BCV rate source and rounding rule
 (Phase 4), OQ-6 Pago Móvil data (Phase 4), OQ-7 refund methods (Phase 5),
-OQ-8 schedules (Phase 6), OQ-9…OQ-12 confirmations at their phase,
-the implementation of OQ-16 (Phase 6 SLA notifications); OQ-17 is implemented
-locally in Phase 4. OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are
-resolved as rules (see `docs/DATABASE_DESIGN.md` §14).
+OQ-8 schedules (Phase 6) and OQ-9…OQ-12 confirmations at their phase.
+OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are resolved as rules
+(see `docs/DATABASE_DESIGN.md` §14); OQ-16 and OQ-17 are also implemented
+locally in Phases 6 and 4 respectively.
 
 Implementation order (each migration ships with its RLS policies; design source:
 `docs/DATABASE_DESIGN.md`, policies: `docs/SECURITY_DESIGN.md`):
@@ -253,9 +254,10 @@ Implementation order (each migration ships with its RLS policies; design source:
       subtracts active, unexpired reservations). `inventory_movements.order_id`
       FK/index added with `orders`. No payments/receipts/tracking UI (M4+),
       no audit_log rows (no administrative action exists yet — M4 writes
-      `payment.verify`), no 24-hour SLA in the schema (DECISIONS #24; OQ-16 is
-      now resolved as notification-only by DECISIONS #25 — implementation
-      pending, no schema change). OQ-9 is exercised by `sale` movements
+      `payment.verify`), no 24-hour SLA in the M3 schema (DECISIONS #24); OQ-16 is
+      resolved as notification-only by DECISIONS #25 and implemented later in
+      migration 005 with dedicated history/inbox tables, without changing M3.
+      OQ-9 is exercised by `sale` movements
       (`admin_id` NULL = system) but stays open; OQ-4/OQ-5 unchanged.
 - [x] **M3 reservation/payment-attempt correction (in place within M3):** applied
       directly to `003_orders_and_reservations.sql` per the
@@ -293,10 +295,19 @@ Implementation order (each migration ships with its RLS policies; design source:
       auto-cancels — OQ-14 confirmed).
 - [ ] **M5 (Phase 5):** POS channel validation data (OQ-7/OQ-11 confirmations)
       and any status-CHECK widenings.
-- [ ] **M6 (Phase 6):** Realtime publication + `store_settings` shape for
-      schedules (OQ-8) **plus the OQ-16 recurring SLA notifications** (24 h
-      after receipt submission, every 15 min until approve/reject, deduplicated
-      across overlapping executions, no auto-cancel/release).
+- [x] **M6 (Phase 6) — OQ-16 recurring SLA notifications:** implemented in
+      `supabase/migrations/005_receipt_sla_notifications.sql` and
+      `supabase/worker/sla-worker.mjs` (validated locally, **not applied
+      remotely or deployed**). One immutable `receipt_submissions` row per
+      actual receipt (original + correction), a durable `admin_notifications`
+      inbox for every active administrator, 24 h + 15 min repeats until the
+      specific receipt is approved/rejected, and database-enforced dedupe
+      `(receipt_submission_id, admin_id, interval_bucket)` across overlapping
+      executions. The worker runs once immediately then polls every 15 min with
+      no overlapping cycles; SLA processing writes no order/payment/inventory/
+      reservation state. Delayed runs create only the current bucket.
+- [ ] **M6 (Phase 6) remaining:** Realtime publication + `store_settings` shape
+      for schedules (OQ-8).
 
 ---
 
@@ -307,8 +318,9 @@ Confirmed business rules recorded in `docs/DECISIONS.md` **#25** and **#26**;
 `docs/SECURITY_DESIGN.md` §8, `docs/ROADMAP.md`, `TASKS.md` and `README.md`
 updated accordingly. **At that time** no SQL, migration, application code or
 remote resource was touched; M1/M2/M3 behavior and migration history are
-unchanged. The later M4 entry above supersedes this documentation-only status
-for OQ-17 (migration 004); OQ-16 is still documentation-only.
+unchanged. The later M4 and M6 entries above supersede this documentation-only
+status: migration 004 implements OQ-17 and migration 005 plus the narrow worker
+implement OQ-16, both locally only.
 
 - [x] **OQ-16 (DECISIONS #25) — resolved as a rule:** 24-hour administrative
       receipt-review SLA from receipt submission; notify the responsible
@@ -326,7 +338,7 @@ for OQ-17 (migration 004); OQ-16 is still documentation-only.
       changes to 001/002/003 or to `src/`, no remote apply. Migration 004 and
       the server action now implement OQ-17 as recorded in the M4 entry above.
 
-**Implementation status (Phase 4 OQ-17 done in M4; OQ-16 still PENDING):**
+**Implementation status (Phase 4 OQ-17 and Phase 6 OQ-16 done locally):**
 
 - [x] **Phase 4 — OQ-17 quote-acceptance transition:** implemented in migration
       004 and validated locally (not applied remotely). The customer's explicit
@@ -336,15 +348,17 @@ for OQ-17 (migration 004); OQ-16 is still documentation-only.
       service-role RPCs are idempotent, ignore admin retries, leave the
       correction window and SLA untouched, audit `order.quote_accept` in the
       same transaction and expose no client write path.
-- [ ] **Phase 6 — OQ-16 recurring SLA notifications:** scheduled detection of
-      receipts past their 24-hour review deadline; notify the responsible
-      administrator, repeat every 15 minutes until approve/reject, deduplicate
-      with a stable key (receipt/submission + due interval + recipient) across
-      overlapping worker executions; no order/status/reservation/inventory
-      writes; tests for dedupe, stop-on-decision and no-auto-cancel. Requires
-      deciding the scheduler mechanism (revisit DECISIONS #1's
-      no-background-workers scope) and how the responsible administrator is
-      identified.
+- [x] **Phase 6 — OQ-16 recurring SLA notifications:** migration 005 adds
+      `receipt_submissions` and `admin_notifications`, extends the real
+      submission/rejection RPCs, and adds a service-role-only SLA cycle RPC;
+      `supabase/worker/sla-worker.mjs` is the dedicated scheduled component
+      authorized by the amendment to DECISIONS #1. Every active administrator
+      is a recipient, repeats are every 15 minutes until that receipt is
+      approved/rejected, and dedupe is enforced by the unique key
+      `(receipt_submission_id, admin_id, interval_bucket)` with `ON CONFLICT DO
+      NOTHING`. No order/status/payment/inventory/reservation writes and no
+      external outbox. Validated locally (SQL contract, behavioral RLS/grant
+      tests, worker unit tests); not applied remotely or deployed.
 
 Validation (Phase 1B / M1 — executed locally, 2026-11-14):
 
@@ -553,8 +567,15 @@ and `npm run build` all passed locally.
       `npm run lint` exit 0 · `npx tsc --noEmit` exit 0 · `npm run build` success.
 
 Explicitly **not** done in Phase 4: migration 004 was **not applied to any
-remote Supabase project**; no OQ-16 notifications/scheduler, payments, receipt
-storage or tracking UI; no remote deployment.
+remote Supabase project**; payments, receipt storage or tracking UI; no remote
+deployment. OQ-16 notifications/scheduler are implemented separately in Phase 6
+and are likewise local-only.
+
+**Phase 6 / OQ-16 local validation (final):** `npm test` — **143/143 passed**
+(34 new static/behavioral/worker tests vs. the 109-test Phase 4 suite) ·
+`npm run lint` exit 0 (only two pre-existing OQ-17 warnings) ·
+`npx tsc --noEmit` exit 0 · `npm run build` success. No remote migration,
+deployment, secret change, commit or push.
 
 Then, per roadmap phase:
 
@@ -571,9 +592,11 @@ Then, per roadmap phase:
       `quote_acceptance_expires_at`, `initial_expires_at` immutable, no
       admin-retry extension, no impact on the SLA or correction window (details
       in the M4 entry above).
-- [ ] **Phase 6 (OQ-16):** deduplicated recurring SLA notifications to the
-      responsible administrator (24 h + 15 min repeats until approve/reject);
-      no automatic cancel or inventory release; scheduler decision pending.
+- [x] **Phase 6 (OQ-16):** migration 005 + `supabase/worker/sla-worker.mjs`
+      implement deduplicated in-app SLA notifications for every active
+      administrator (24 h + 15 min repeats until approve/reject); no automatic
+      cancel or inventory release; narrow worker authorized by DECISIONS #1's
+      amendment. Validated locally, not applied remotely or deployed.
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

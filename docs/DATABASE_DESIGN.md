@@ -26,10 +26,12 @@ tests), **not applied remotely yet**. Phase 4 / M4 implemented the OQ-17
 transition in `supabase/migrations/004_quote_acceptance.sql`: the two new
 nullable columns, the four-case `expires_at` invariant (§6.2), the two new
 service-role RPCs and the extended PII-free tracking projection (§11) —
-validated locally (109 tests total), **not applied remotely**, with migrations
-001–003 untouched. Section 8 (payments), the exchange-rate write path
-(§10.1 — OQ-4), the checkout/tracking **UI**, OQ-16 notifications and the
-remaining §11 functions of later phases stay design only. Every
+validated locally, **not applied remotely**, with migrations 001–004 untouched.
+OQ-16 is now implemented additively by migration 005 plus a narrow scheduled
+worker (validated locally, 143 tests total, **not applied remotely/deployed**).
+Section 8 (payments), the exchange-rate write path (§10.1 — OQ-4), the
+checkout/tracking **UI**, Realtime publication and the remaining §11 functions
+of later phases stay design only. Every
 table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
@@ -326,7 +328,7 @@ fee (OQ-17 / DECISIONS #26, **implemented in migration 004**). That new window
 is stored in a separate column; the historical `initial_expires_at` keeps its
 creation-time value and is **never re-armed or rewritten**. The 24-hour figure
 (SPEC §14) is an **administrative receipt-review SLA with notifications only**
-(OQ-16 / DECISIONS #25, pending implementation) — never a reservation
+(OQ-16 / DECISIONS #25, implemented in migration 005) — never a reservation
 duration and never a trigger to cancel or release inventory.
 
 **Status (M3 + M4):** migration `003` implemented the table with its original
@@ -341,10 +343,11 @@ submissions and enforce the two-receipt cap. Migration `004` extends that
 design additively (two new nullable columns, the four-case `expires_at`
 invariant below, two new RPCs, the extended tracking projection and an index on
 `orders.quote_accepted_at`); it **does not** rewrite `initial_expires_at` or
-change migrations 001–003. OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are
-all **resolved in documentation**; OQ-17 is **implemented and validated
-locally** in migration 004 (**not applied remotely**), while the OQ-16
-notification job remains pending Phase 6 work in `TASKS.md`/`docs/ROADMAP.md`.
+change migrations 001–003. Migration 005 later adds the OQ-16 SLA tables and
+RPCs without changing 001–004. OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and
+OQ-17 are all **resolved in documentation**; OQ-17 is implemented locally in
+migration 004 and OQ-16 in migration 005 plus the dedicated worker, both
+**not applied remotely** (see `TASKS.md`/`docs/ROADMAP.md`).
 
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
@@ -411,11 +414,13 @@ notification job remains pending Phase 6 work in `TASKS.md`/`docs/ROADMAP.md`.
   is independent of the 24-hour review SLA and of the 20-minute correction
   window. Orders that never upload a receipt (cash on delivery) keep the plain
   20-minute initial clock.
-- **24-hour review SLA (OQ-16 / DECISIONS #25, implementation pending):** the
-  deadline starts at receipt submission and only produces notifications to the
-  responsible administrator (then every 15 minutes until approve/reject). It
-  never changes `status`, `expires_at`, reservations, or `remaining_quantity`;
-  overlapping notification executions must be deduplicated.
+- **24-hour review SLA (OQ-16 / DECISIONS #25, implemented in migration 005):**
+  each receipt submission (original and the single correction) starts its own
+  deadline. Once exceeded, durable in-app notifications are created for every
+  active administrator, then every 15 minutes until **that** receipt is
+  approved/rejected. It never changes `status`, `expires_at`, reservations,
+  payment state, or `remaining_quantity`; overlapping executions are
+  deduplicated in the database.
 
 **Lifecycle and state consistency (event → reservation → payment → order):**
 
@@ -425,7 +430,7 @@ notification job remains pending Phase 6 work in `TASKS.md`/`docs/ROADMAP.md`.
 | Manual quote pending (OQ-17, M3 behavior kept by M4) | stays HELD (`expires_at = NULL`): no automatic expiration | — | `pending` |
 | Customer **explicitly accepts** quoted fee (OQ-17 — **implemented in migration 004**, local only) | a NEW fixed 20-minute window is written once in `quote_acceptance_expires_at = expires_at = acceptance_time + 20 min`; the historical `initial_expires_at` is **immutable**, admin retries never extend the new window, and a correction window (if already set) keeps precedence; independent of the SLA | — | `pending` |
 | Receipt #1 submitted | held: `expires_at = NULL`; `receipt_attempts` 0 → 1 | `pending` → `in_review` | `pending` |
-| 24-hour review SLA exceeded (OQ-16 — **pending implementation**, no migration yet) | **no change at all**: no cancel, no release, no deadline change | notify the responsible administrator, then every 15 min until approve/reject; dedupe overlapping executions | `pending` (unchanged) |
+| 24-hour review SLA exceeded (OQ-16 — **implemented in migration 005**, local only) | **no change at all**: no cancel, no release, no deadline change | one durable in-app notification per active administrator per 15-min interval until that submission is approved/rejected; dedupe by `(receipt_submission_id, admin_id, interval_bucket)` | `pending` (unchanged) |
 | Receipt #1 **rejected** | ONE 20-minute window opens: `expires_at = correction_window_ends_at = rejection_time + 20 min`; **no inventory released**; attempts stay 1 | `rejected` | stays `pending` (SPEC §10: order status independent of payment status) |
 | Receipt #2 (correction) submitted inside the window, held during review | held again (`expires_at = NULL`); attempts 1 → 2; window **not** re-armed | new/updated component `pending`/`in_review` | `pending` |
 | Receipt #2 **rejected** | automatic cancel: all active reservations `released` + `closed_at` (no movement, no stock change); availability restored once | final `rejected` | → `canceled` automatically |
@@ -443,8 +448,42 @@ deadline for ordinary orders), the separate fixed 20-minute
 the separate 20-minute correction window after the first rejection, and the
 24-hour review SLA, which only emits notifications. The OQ-17 row is now
 **implemented in migration 004** (validated locally, not applied remotely);
-the OQ-16 notification row remains **not implemented** (Phase 6). No payment,
-scheduler or tracking UI was added with the OQ-17 work.
+both OQ-16 and OQ-17 rows are now implemented by migrations 005 and 004
+respectively (local only). No payment or tracking UI was added with either
+work.
+
+#### Receipt submissions and administrator notifications (OQ-16, migration 005)
+
+| Table | Column | Type | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `receipt_submissions` | `id` | bigint identity | no | immutable primary key, never updated except review fields |
+| | `order_id` | bigint FK → `orders(id)` | no | `ON DELETE CASCADE`; indexed |
+| | `attempt_number` | smallint | no | `CHECK IN (1, 2)`; `UNIQUE (order_id, attempt_number)` — one immutable row per actual submission |
+| | `submitted_at` | timestamptz | no | starts that submission's own 24-hour SLA; **never reset** |
+| | `reviewed_at` | timestamptz | yes | set exactly once when approved/rejected; `>= submitted_at` |
+| | `review_status` | text | no | default `pending`; `CHECK IN ('pending','approved','rejected')`; equivalent to `reviewed_at IS NULL` |
+| `admin_notifications` | `id` | bigint identity | no | durable in-app inbox row |
+| | `receipt_submission_id` | bigint FK → `receipt_submissions(id)` | no | `ON DELETE CASCADE`; indexed |
+| | `admin_id` | **uuid** FK → `administrators(id)` | no | `ON DELETE CASCADE`; verified UUID, not bigint; recipient must be `is_active` |
+| | `interval_bucket` | bigint | no | `floor(epoch / 900)` of the processing time; `UNIQUE (receipt_submission_id, admin_id, interval_bucket)` |
+| | `created_at` | timestamptz | no | when the notification was created |
+| | `read_at` | timestamptz | yes | admin-owned read/unread marker; `NULL` = unread |
+
+`hold_order_reservations` inserts the submission row immediately after its
+guarded atomic increment, so idempotent repeats consume no attempt and create
+no row. A `BEFORE UPDATE` trigger rejects any rewrite of `order_id`,
+`attempt_number` or `submitted_at` (only review fields may be appended), so the
+24-hour clock cannot be silently restarted. `open_order_correction_window`
+closes the pending row in the same
+transaction as the correction-window/cancel side effects. The future approval
+flow must call `approve_receipt_submission` in its own transaction; it only
+closes the SLA row. `process_sla_notifications(p_now)` is the sole write path
+for `admin_notifications`: current bucket only (no historical replay),
+`CROSS JOIN` over active administrators (no `NOT EXISTS` that could suppress
+another recipient), and `ON CONFLICT DO NOTHING`. RLS is enabled and forced;
+admins can read receipt history, and can read/update **only** their own
+notification rows. All five RPCs are `SECURITY INVOKER`, `VOLATILE`, pinned to
+an empty `search_path` and granted to `service_role` only.
 
 - **Indexes:** `inventory_reservations_order_id_idx`, partial
   `inventory_reservations_active_batch_idx (batch_id) WHERE status = 'active'`,
@@ -549,16 +588,15 @@ never expires or cancels an order — it only opens the single 20-minute
 correction window; the **second** rejection (`receipt_attempts = 2`) cancels the
 order automatically and releases its reservations (§6.2, OQ-14 confirmed). The
 24-hour administrator deadline (SPEC §14) is an **operational SLA** surfaced in
-the dashboard — it is deliberately not a column and not a reservation duration.
-OQ-16 is resolved (DECISIONS #25): the clock starts at receipt submission (not
-at order creation); when it is exceeded the responsible administrator is
-notified, then every 15
-minutes until approval/rejection, with duplicate suppression across overlapping
-worker executions; it **never** cancels the order or releases inventory. Manual
-quote acceptance starts a new initial reservation window (§6.2, DECISIONS #26),
-not an administrative deadline: implemented in migration 004 via the separate
+the dashboard — it is deliberately not an `orders` column and not a reservation
+duration. OQ-16 is resolved and implemented (DECISIONS #25, migration 005): the
+clock starts at receipt submission (not at order creation); when it is exceeded
+every active administrator is notified, then every 15 minutes until that
+submission is approved/rejected, with database-level duplicate suppression;
+it **never** cancels the order or releases inventory. Manual quote acceptance
+starts a new initial reservation window (§6.2, DECISIONS #26), not an
+administrative deadline: implemented in migration 004 via the separate
 `quote_acceptance_expires_at` column, with `initial_expires_at` immutable.
-OQ-16 remains pending implementation (Phase 6).
 
 - **Indexes:** `orders_status_created_at_idx (status, created_at DESC)`
   (dashboard queues), partial `orders_pending_idx (created_at DESC) WHERE status = 'pending'`,
@@ -761,16 +799,30 @@ No table duplicates another table's state. Everything derived is computed:
   closed reservations), and writes `order.quote_accept` audit data with no PII
   in the same transaction. No client write path and no remote apply.
 
-**Pending mechanism (decision #25 — Phase 6, no migration exists yet):**
+**Implemented mechanism (decision #25 — Phase 6, migration 005 + worker; local
+only):**
 
-- **SLA notification job:** a scheduled dispatch that detects receipts
-  whose 24-hour review deadline has passed, notifies the responsible
-  administrator, repeats every 15 minutes until approval/rejection, and uses a
-  stable idempotency key (receipt/submission, due interval, recipient) so
-  overlapping worker executions cannot send duplicates. It must never write an
-  order status, reservation deadline, inventory quantity or movement. Choosing
-  the scheduler mechanism requires revisiting the "no background workers"
-  constraint of DECISIONS #1; no such mechanism exists today.
+- `public.process_sla_notifications(p_now timestamptz default null)` —
+  service-role-only, `VOLATILE`, `SECURITY INVOKER`, pinned `search_path`.
+  Detects pending `receipt_submissions` older than 24 hours and inserts one
+  `admin_notifications` row per active administrator for the **current**
+  15-minute bucket (`floor(epoch / 900)`), using `ON CONFLICT DO NOTHING` on
+  `(receipt_submission_id, admin_id, interval_bucket)`. It returns metrics only
+  and never writes an order, payment, reservation deadline, inventory quantity
+  or movement. A nullable clock override exists for deterministic tests.
+- `public.approve_receipt_submission(p_order_id bigint)` — service-role-only
+  primitive for the future M4 approval flow; closes the pending submission in
+  the same transaction as the real approval action. It has no business-state
+  effect.
+- `private.close_pending_receipt_submission(p_order_id bigint, p_outcome text)`
+  — shared service-role helper used by approval and by the existing rejection
+  RPC; repeated calls are no-ops.
+- `supabase/worker/sla-worker.mjs` — narrow Node.js scheduled process,
+  authorized only by the amendment to DECISIONS #1. It calls the single service
+  role RPC immediately on startup then every 15 minutes, has no overlapping
+  cycles, isolates per-cycle errors, and shuts down gracefully with a bounded
+  wait. No external provider/outbox is configured: the in-app inbox is the
+  delivery.
 
 **Realtime (Phase 6):** `orders`, `payments` and `cancellation_requests` will be
 added to the `supabase_realtime` publication; Realtime respects the same RLS
@@ -827,6 +879,6 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-13 | Does the 20-minute initial reservation clock apply to orders that never upload a receipt (cash on delivery) or that wait for a manual delivery quote (SPEC §6/§8)? | **Resolved by the confirmed M3 rules:** quote-pending deliveries are created held (`expires_at = NULL`) and keep the inventory reserved while the quote is confirmed; cash-on-delivery orders keep the plain 20-minute initial clock. The follow-up sub-question was recorded as **OQ-17** and is now resolved by DECISIONS #26 (new 20-minute window on explicit fee acceptance) |
 | OQ-14 | Repeat rejection policy and the number of allowed receipts | **Resolved by the confirmed M3 rules:** at most two receipts total (original + one correction), the single correction window is 20 minutes and never extended by repeated rejections, and a second rejection auto-cancels the order and releases all reservations. Implemented in migration 003 (`orders.receipt_attempts`, `open_order_correction_window`) |
 | OQ-15 | Confirm the hold rule: a submitted receipt awaiting verification suspends the reservation deadline (`expires_at = NULL`) until an administrator acts | **Resolved by the confirmed M3 rules:** migration 003's `hold_order_reservations` suspends the deadline and counts the submission (idempotent on repeats); the receipt stays held throughout admin review |
-| OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved by confirmed rules (DECISIONS #25):** notify the responsible administrator once the 24-hour receipt-review deadline is exceeded, repeat every 15 minutes until approve/reject, suppress duplicates from overlapping worker executions, and **never** auto-cancel the order or release inventory. **Implementation pending in Phase 6** notifications (§11); no schema/status change in M3 and none in migration 004 |
+| OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved (DECISIONS #25) and implemented in Phase 6** by migration 005 + `supabase/worker/sla-worker.mjs` (validated locally, not applied remotely/deployed): each receipt submission starts its own 24-hour clock; every active administrator receives a durable in-app notification on the first worker run after the deadline, repeated every 15 minutes until that submission is approved/rejected; dedupe key `(receipt_submission_id, admin_id, interval_bucket)`. **Never** auto-cancels the order or releases inventory; no change to M3/M4 status or reservation rules |
 | OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally, not applied remotely): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
 

@@ -50,8 +50,10 @@ RPCs, validated on a local PostgreSQL cluster (36 tests). **Not applied
 remotely yet.** Reservations (§6.2), checkout-time stock deduction, sale
 movements and the 20-minute timing (initial deadline + single correction
 window) arrived with **M3** (migration 002 itself is unchanged); the 24-hour
-administrative review SLA stays out of the schema and is notification-only
-(DECISIONS #24/#25), and the admin screens below remain to do.
+administrative review SLA remains notification-only and is deliberately not a
+column on `orders`/`inventory_reservations` (DECISIONS #24/#25) — its dedicated
+history/inbox tables arrive later in migration 005. The admin screens below
+remain to do.
 
 - Batches (product, initial/remaining quantity, production date, responsible
   admin), FIFO allocation, stock movements (entries, sales, adjustments) with
@@ -80,8 +82,9 @@ workflow remain to do. OQ-13 (quote case), OQ-14, OQ-15, **OQ-16 and OQ-17 are
 all resolved in documentation** (DECISIONS #24–#26). OQ-17 is **implemented in
 Phase 4** (`supabase/migrations/004_quote_acceptance.sql`, local only): a new
 fixed 20-minute acceptance window in `quote_acceptance_expires_at`, with
-`initial_expires_at` immutable. OQ-16 (24-hour SLA notifications) is still
-pending in Phase 6; neither changes M1/M2/M3 or their migrations.
+`initial_expires_at` immutable. OQ-16 is **implemented in Phase 6** by migration
+005 and the dedicated SLA worker (also local only). Neither changes M1/M2/M3 or
+their migrations.
 
 - Guest checkout (no mandatory registration): customer name, WhatsApp phone,
   delivery/pickup, address and references, optional instructions.
@@ -139,12 +142,17 @@ below remains to do.
 - Supabase Realtime notifications for both administrators (new order, new
   receipt, relevant order/payment updates); database remains the source of
   truth.
-- **Pending implementation (OQ-16 / DECISIONS #25):** recurring receipt-review
-  SLA notifications — 24 hours after receipt submission, notify the responsible
-  administrator, repeat every 15 minutes until approve/reject, deduplicate
-  overlapping worker executions, and never cancel the order or release
-  inventory. Requires a scheduler decision (revisit DECISIONS #1's no-background-workers
-  scope) and tests for overlap/dedupe and no-auto-cancel.
+- [x] **OQ-16 / DECISIONS #25 — implemented locally:** recurring receipt-review
+  SLA notifications via `supabase/migrations/005_receipt_sla_notifications.sql`
+  and the dedicated `supabase/worker/sla-worker.mjs`. Each receipt submission
+  starts its own 24-hour clock; every active administrator gets a durable
+  in-app notification on the first run after the deadline, repeated every
+  15 minutes until that submission is approved/rejected. Database-level dedupe
+  `(receipt_submission_id, admin_id, interval_bucket)` covers overlapping
+  executions; delayed runs create only the current bucket. No order/payment/
+  reservation/inventory state is written; no external provider/outbox. The one
+  background worker is authorized by the OQ-16-only amendment to DECISIONS #1.
+  Validated locally, not applied remotely or deployed.
 - Prepared WhatsApp deep links (no WhatsApp Business API in this release).
 - Store settings: business address for pickup, attention/preparation hours
   (informative, orders accepted 24/7).

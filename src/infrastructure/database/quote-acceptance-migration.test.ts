@@ -30,6 +30,7 @@ const MIGRATIONS = [
   path.join(repoRoot, "supabase", "migrations", "002_inventory_foundation.sql"),
   path.join(repoRoot, "supabase", "migrations", "003_orders_and_reservations.sql"),
   path.join(repoRoot, "supabase", "migrations", "004_quote_acceptance.sql"),
+  path.join(repoRoot, "supabase", "migrations", "005_receipt_sla_notifications.sql"),
 ];
 
 const ADMIN = "11111111-1111-4111-8111-111111111111";

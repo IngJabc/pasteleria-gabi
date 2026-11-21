@@ -31,8 +31,12 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 **Progress:** M1 (the first migration — catalog, settings, zones,
 administrators, audit + RLS/storage policies) is written in
 `supabase/migrations/001_catalog_and_admin_foundation.sql`, validated locally
-and **applied to the production Supabase project**. The catalog pages, admin
-auth and admin CRUD items below are not started.
+and **applied to the production Supabase project**. The public catalog list and
+detail pages now use request-time anon reads through
+`createSupabaseServerClient()` from the existing `products` and `product_images`
+tables and the public `product-images` Storage bucket. This work adds no seed
+data, migration, RLS or Storage policy change, and makes no remote Supabase
+change. Admin auth, admin CRUD and the catalog/product seed remain pending.
 
 - Create the Supabase project; provision environment variables (no credentials
   in source code).

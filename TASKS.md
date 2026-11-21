@@ -200,8 +200,8 @@ plus `supabase/worker/sla-worker.mjs`). Neither is applied remotely.
 ## Phase 1B — Migrations, catalog and admin access 🚧
 
 **Progress:** M1 is implemented, validated and applied to production (see the
-implementation order below); the catalog pages, admin auth and admin CRUD
-items further down have not started.
+implementation order below). Public catalog pages now render from the database;
+admin auth, admin CRUD and the catalog/product seed remain pending.
 
 **Genuine blockers** (cannot be resolved by engineering work alone):
 
@@ -716,7 +716,7 @@ Then, per roadmap phase:
 
 - [ ] Generate TypeScript database types and add the `Database` generic to the
       three Supabase clients (after M1).
-- [ ] Public catalog pages (list + detail) fed from the database; public
+- [x] Public catalog pages (list + detail) fed from the database; public
       `product-images` bucket.
 - [ ] Supabase Auth for the two administrators; protected `/admin` shell
       (server-side check against `administrators`).
@@ -753,6 +753,43 @@ Then, per roadmap phase:
       multiple intervals) with a CHECK constraint and admin-only Zod action;
       no new table/seed, no RLS/grant change, no order/payment coupling.
       Validated locally (static + behavioral 001–009 + server actions).
+
+## Public catalog delivery (Phase 1)
+
+- Branch: `features/public-catalog-pages`
+- Routes `src/app/(storefront)/page.tsx` and
+  `src/app/(storefront)/productos/[slug]/page.tsx` render active products from
+  `products` and `product_images` through `createSupabaseServerClient()`. Images
+  use public URLs from the existing `product-images` Storage bucket. The work
+  adds no seed data, migration, RLS or Storage policy change, auth, admin, cart,
+  checkout, dependency or `Database` generic, and makes no remote Supabase
+  access.
+- `src/features/catalog/` owns the Zod row and product schemas, the narrow
+  injected `CatalogClient`, active-only queries with deterministic `id` order,
+  one batched image query with `position, id` order, stable Spanish error
+  messages and the feature-owned list/detail components.
+- Both pages render static shells with request-bound data and dynamic params in
+  `<Suspense>`. Unknown or inactive slugs call `notFound()` inside the streamed
+  boundary and show a Spanish not-found view with a link to `/`. Next.js 16 keeps
+  HTTP status 200 and emits `<meta name="robots" content="noindex">` for that
+  response. A literal 404 requires `generateStaticParams` and data access before
+  streaming, which needs real catalog data at build time and is out of scope.
+- `next.config.ts` derives `images.remotePatterns` from
+  `NEXT_PUBLIC_SUPABASE_URL` and scopes it to
+  `/storage/v1/object/public/product-images/**`. Set a valid URL at build time;
+  `next/image` rejects Supabase Storage URLs otherwise.
+
+Validation (public catalog): `npm test` passed 27 files and 299 tests. The focused
+catalog suite passed 1 file and 8 tests. `npm run lint` reported 0 errors and
+2 pre-existing warnings in
+`src/infrastructure/database/quote-acceptance-migration.test.ts`; no catalog
+warnings. `npm run build` succeeded, with `/` and `/productos/[slug]` reported
+as Partial Prerender. `npm run typecheck` exited 0 with no diagnostics.
+`git diff --check` exited 0; Git reported only a cosmetic LF-to-CRLF notice.
+File hygiene showed 11 scoped files with no migration, env file, lockfile,
+generated artifact, secret or unrelated change. Independent review passed all
+five repair checks with no new defects. The security review found no confirmed
+findings.
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

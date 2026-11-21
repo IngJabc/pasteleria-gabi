@@ -38,7 +38,10 @@ src/app/
 ├── layout.tsx                 # Root layout: <html lang="es">, fonts, metadata
 ├── globals.css                # Tailwind CSS entry
 ├── favicon.ico
-├── (storefront)/page.tsx      # /            customer-facing
+├── (storefront)/page.tsx      # /            public product list
+├── (storefront)/productos/[slug]/
+│   ├── page.tsx               # /productos/[slug] public product detail
+│   └── not-found.tsx          # Spanish fallback for unknown/inactive slugs
 └── (admin)/admin/page.tsx     # /admin       private panel (placeholder, no data)
 ```
 
@@ -51,19 +54,20 @@ src/app/
 - The same separation is mirrored in code: customer features and admin modules
   are separate folders under `src/features/`, so an admin-only capability can
   never be mounted into the storefront by accident.
-- **Phase 0 note:** both pages are placeholders that render no data; `/admin` has
-  no auth guard yet because no authentication flow exists in this phase.
+- `/admin` is still a placeholder and has no auth guard because no authentication
+  flow exists yet. The public catalog pages render active products at request
+  time; cart, checkout and admin UI remain unimplemented.
 
-Planned route map (documented, not implemented):
+Route map (the Phase column records the original roadmap phase):
 
-| Route | Purpose | Phase |
-| --- | --- | --- |
-| `/` | Storefront home / catalog | 1 |
-| `/productos/[slug]` | Product detail | 1 |
-| `/carrito`, `/checkout` | Cart and guest checkout | 3 |
-| `/seguimiento/[token]` | Private order tracking link | 3 |
-| `/admin` | Panel dashboard | 1 (shell), 5 (full) |
-| `/admin/pedidos`, `/admin/productos`, `/admin/inventario`, `/admin/pagos`, `/admin/ventas`, `/admin/configuracion` | Admin modules | 1–5 |
+| Route | Purpose | Phase | Status |
+| --- | --- | --- | --- |
+| `/` | Storefront home / catalog | 1 | Implemented |
+| `/productos/[slug]` | Product detail | 1 | Implemented |
+| `/carrito`, `/checkout` | Cart and guest checkout | 3 | Planned |
+| `/seguimiento/[token]` | Private order tracking link | 3 | Implemented in code |
+| `/admin` | Panel dashboard | 1 (shell), 5 (full) | Placeholder |
+| `/admin/pedidos`, `/admin/productos`, `/admin/inventario`, `/admin/pagos`, `/admin/ventas`, `/admin/configuracion` | Admin modules | 1–5 | Planned |
 
 ## 3. Supabase access
 
@@ -88,6 +92,32 @@ Rules:
   idempotent (SPEC §8), executed from the server.
 - Supabase Realtime (admin notifications) and Storage (public product photos,
   private receipts) plug into the same layer in later phases.
+
+### Public catalog reads
+
+`/` and `/productos/[slug]` call `createSupabaseServerClient()` inside their data
+components. The request-bound anon client reads only active rows from `products`
+and their `product_images` through existing row-level security (RLS) policies.
+The work uses no service-role client and no generated `Database` generic.
+`src/features/catalog/schemas.ts` validates PostgREST rows and the rendered
+product shape with Zod. `queries.ts` accepts a narrow injected client, orders
+products by `id`, batches image reads, orders images by `position` then `id`, and
+maps errors to Spanish messages.
+
+Both routes render a static shell with the data fetch inside `<Suspense>`, so
+Next.js 16 treats them as Partial Prerender (PPR) routes. Unknown or inactive
+slugs call `notFound()` after the shell starts streaming. The response keeps HTTP
+status 200 and includes `<meta name="robots" content="noindex">`. Returning a
+literal 404 requires `generateStaticParams` and data access before streaming,
+which needs real catalog data at build time and is out of scope.
+
+Image URLs come from the public `product-images` bucket. `next.config.ts` derives
+`images.remotePatterns` from `NEXT_PUBLIC_SUPABASE_URL` and scopes it to
+`/storage/v1/object/public/product-images/**`. Set a valid URL at build time;
+`next/image` rejects Supabase Storage URLs otherwise.
+
+Follow-up: the public SELECT policies grant access `TO anon`. An authenticated
+non-admin needs a policy update once auth exists.
 
 ## 4. Data flow of a business operation (design target)
 

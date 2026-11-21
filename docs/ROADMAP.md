@@ -290,6 +290,20 @@ applied baseline; 007 is the next migration and rewrites nothing earlier.
   history and age reporting are now implemented in migration 007 (Phase 5b);
   the automatic provider lookup / worker remains a separate future item.**
 
+## Developer automation — autonomous OpenCode workflow (delivery pending)
+
+Reusable `/autopilot` orchestration is implemented as project-local OpenCode V2
+configuration: a primary `project-orchestrator`, six specialized subagents,
+a documented skill catalog and an operational manual. One invocation inspects
+Git/GitHub state, protects user work, verifies the previous PR is merged (or
+recovers interrupted work), syncs `main`, creates a scoped `features/...`
+branch, selects the next eligible `TASKS.md`/roadmap item, routes relevant
+installed skills, delegates implementation and independent review, validates,
+documents, commits, pushes the feature branch to the verified remote and opens a
+PR against canonical `main`. It stops at the human merge checkpoint. See
+`docs/AUTONOMOUS_WORKFLOW.md` and `docs/skills-catalog.md`. No bakery feature
+task, migration, deployment or remote environment change is part of this work.
+
 ## Later / not scheduled
 
 - Whole cakes made to order (requires production on demand — the current model

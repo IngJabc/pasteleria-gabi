@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "objective": "short-objective-id",
+  "branch": "features/descriptive-name",
+  "phase": "inspect",
+  "base": {
+    "remote": "origin",
+    "ref": "main",
+    "commit": "0000000000000000000000000000000000000000"
+  },
+  "pushRemote": "origin",
+  "commits": [],
+  "pr": {
+    "number": null,
+    "url": null,
+    "state": "none",
+    "baseRef": "main",
+    "mergeVerified": false
+  },
+  "validation": [],
+  "context": {
+    "previousObjective": false,
+    "unrelatedChanges": false,
+    "interruptedBranch": false,
+    "baseDirty": false,
+    "eligibleTask": true,
+    "recovered": false
+  },
+  "nextAction": "inspect",
+  "updatedAt": null,
+  "note": "Template only. The runtime copy is .opencode/autopilot-state.json and is gitignored; Git, GitHub and task docs are the source of truth."
+}

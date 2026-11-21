@@ -756,3 +756,55 @@ Then, per roadmap phase:
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).
+
+---
+
+## Developer automation — reusable autonomous OpenCode workflow (implementation complete, delivery pending)
+
+Objective:
+`features/autonomous-opencode-workflow` (one branch/PR, no bakery roadmap task).
+
+- [x] Inspected the installed environment before changing anything: active
+      harness is OpenCode V2 2.3.2; the standalone `opencode-ai@1.17.15` CLI on
+      `PATH` is stale and rejects the V2 global config. Definitions use native
+      V2 fields verified against `https://opencode.ai/config.json`.
+- [x] Verified Git/GitHub state: OQ-12 PR #9 merged into `main` before starting;
+      clean `main`; single verified remote
+      `https://github.com/IngJabc/pasteleria-gabi.git` (user-owned canonical,
+      `fork: false`, no separate fork); `main` fast-forwarded; feature branch
+      created from that base.
+- [x] Added `opencode.jsonc` with `default_agent: project-orchestrator`, ordered
+      V2 safety denials and hard `tool.use` policies for push-to-`main`, force
+      pushes, branch deletion, PR merge/approval, hard reset/clean/stash/restore
+      and remote Supabase push/reset (including `npx`/`npm exec` forms). No agent
+      definition re-enables a denied command.
+- [x] Added `/autopilot` in `.opencode/commands/autopilot.md` selecting
+      `project-orchestrator` and enforcing one objective with a human merge
+      checkpoint.
+- [x] Added primary `project-orchestrator` plus six specialized subagents:
+      planner, implementer, reviewer, QA, security and docs. Delivery actions
+      are restricted to the orchestrator; review/QA/security/planner are
+      read-only and docs is documentation-only.
+- [x] Added persistent, recoverable state convention
+      (`.opencode/autopilot-state.json`, runtime-owned and gitignored) with a
+      tracked `.opencode/autopilot-state.example.json`, Git/GitHub/docs as the
+      source of truth, and simulated recovery checks.
+- [x] Discovered all 22 installed skills (19 global SKILL.md files plus 3
+      built-ins) and catalogued them in `docs/skills-catalog.md` without copying
+      full skill instructions. UI work routes to `ui-ux-pro-max` first.
+- [x] Documented operation, permissions, recovery, checkpoints, troubleshooting
+      and known limitations in `docs/AUTONOMOUS_WORKFLOW.md`; linked both docs
+      from `README.md`.
+- [x] Added `scripts/validate-autopilot.mjs` and `npm run validate:autopilot` to
+      recheck definitions, hard policies, skill discovery, state recovery,
+      fork/remote facts and Git safety without pushing or merging.
+- [x] Validated definitions, skill discovery, task-selection and Git-safety
+      matrices non-destructively; ran the repository test/lint/typecheck/build
+      suite and reviewed the complete diff.
+- [x] No bakery roadmap task was implemented; no migration, storage policy,
+      remote SQL, deployment, secret change, PR merge or push to `main`.
+
+Validation (autonomous workflow): `npm run validate:autopilot`, `npm test`,
+`npm run lint`, `npm run typecheck` and `npm run build`; exact final commands,
+exit codes, commit hash, pushed branch and PR URL are recorded in the delivery
+report once the PR exists.

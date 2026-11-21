@@ -42,21 +42,24 @@ src/app/
 ├── (storefront)/productos/[slug]/
 │   ├── page.tsx               # /productos/[slug] public product detail
 │   └── not-found.tsx          # Spanish fallback for unknown/inactive slugs
-└── (admin)/admin/page.tsx     # /admin       private panel (placeholder, no data)
+└── (admin)/admin/page.tsx     # /admin       session-guarded POS/refund panel (local only)
 ```
 
 - The `(storefront)` route group will hold all customer routes:
   catalog, cart, checkout, private order tracking.
 - The `(admin)/admin` segment holds the private panel for the two administrators
-  (dashboard, orders, products, inventory, sales, payments, refunds, settings —
-  SPEC §15). Authorization will be enforced server-side from the database, not
-  from `user_metadata`.
+  (SPEC §15). `/admin` now renders the local POS cash-sale and refund forms; the
+  other modules remain planned. The session gate uses the request-bound server
+  client to check `auth.getUser()` and `administrators.is_active`, then fails
+  closed before the catalog read or forms render. It never trusts `user_metadata`.
 - The same separation is mirrored in code: customer features and admin modules
   are separate folders under `src/features/`, so an admin-only capability can
   never be mounted into the storefront by accident.
-- `/admin` is still a placeholder and has no auth guard because no authentication
-  flow exists yet. The public catalog pages render active products at request
-  time; cart, checkout and admin UI remain unimplemented.
+- `/admin` is implemented locally with `robots: noindex, nofollow` and
+  `instant = false` so the session check blocks before controls render. Two-admin
+  auth provisioning and the full protected admin shell remain pending. The public
+  catalog pages render active products at request time; cart, checkout and the
+  other admin modules remain unimplemented.
 
 Route map (the Phase column records the original roadmap phase):
 
@@ -66,7 +69,7 @@ Route map (the Phase column records the original roadmap phase):
 | `/productos/[slug]` | Product detail | 1 | Implemented |
 | `/carrito`, `/checkout` | Cart and guest checkout | 3 | Planned |
 | `/seguimiento/[token]` | Private order tracking link | 3 | Implemented in code |
-| `/admin` | Panel dashboard | 1 (shell), 5 (full) | Placeholder |
+| `/admin` | Session-guarded POS cash-sale and refund panel | 1 (shell), 5 (full) | Implemented locally; full shell pending |
 | `/admin/pedidos`, `/admin/productos`, `/admin/inventario`, `/admin/pagos`, `/admin/ventas`, `/admin/configuracion` | Admin modules | 1–5 | Planned |
 
 ## 3. Supabase access

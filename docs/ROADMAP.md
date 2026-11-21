@@ -174,33 +174,37 @@ remains OPEN.
 ## Phase 5 — Admin panel and point of sale 🚧
 
 **Progress:** the POS cash-sale, external-cash-registration, verification and
-refund **backend** is implemented in migration 006 (local-only; no UI, no remote
-apply). The admin panel/history UI remains to do. OQ-7 was resolved by migration
-006; OQ-11 was resolved by confirmed decision #36 (anonymous in-person POS
-sales, no customer fields and no schema change). OQ-12 was resolved by decisions
-#37/#38 and implemented with a token-only server action on the new private
-`/seguimiento/[token]` route: all submitted receipts, exact 300-second signed
-URLs, and approved/rejected payment eligibility.
+refund **backend** is implemented in migration 006 (local-only; no remote
+apply). The `/admin` panel now renders a POS cash-sale form and a refund form
+behind a server-side active-admin session check that fails closed before any
+catalog read or form renders. These forms are local code: migration 006 has not
+been applied remotely, and the forms are not deployed. Full protected admin
+shell and provisioning of the two administrators remain pending. OQ-7 was
+resolved by migration 006; OQ-11 was resolved by confirmed decision #36
+(anonymous in-person POS sales, no customer fields and no schema change). OQ-12
+was resolved by decisions #37/#38 and implemented with a token-only server action
+on the new private `/seguimiento/[token]` route: all submitted receipts, exact
+300-second signed URLs, and approved/rejected payment eligibility.
 
 - Dashboard: pending orders, receipts to review, available inventory, sales and
   recent activity (UI still to do).
-- **Backend implemented in migration 006 (no UI):** walk-in POS cash sales as
-  one `orders` row with `channel = 'pos'`, server-recomputed prices, immediate
-  FIFO allocation and inventory consumption via the existing
+- **Backend implemented in migration 006; POS UI implemented locally:** walk-in
+  POS cash sales as one `orders` row with `channel = 'pos'`, server-recomputed
+  prices, immediate FIFO allocation and inventory consumption via the existing
   `consume_order_reservations` RPC, one approved cash payment component and
-  idempotency by key — no duplicate inventory deduction and no customer
+  idempotency by key, with no duplicate inventory deduction and no customer
   name/phone/email collected (OQ-11/#36). Admin cash registration against an
-  existing online order is also implemented.
-- **Backend implemented in migration 006 (no UI):** payment verification and
-  append-only refund recording with idempotency by key, currency copied from
-  the payment, over-refund blocked and payment status becoming
-  `refunded_partial`/`refunded_full`. OQ-7 was resolved in migration 006: SPEC
-  §12 requires a refund-method field but not its value domain, so
-  `payment_refunds.method` is non-empty free text with no value-domain CHECK or
-  invented value list. This is distinct from `payments.method`, which is
+  existing online order remains backend-only.
+- **Backend implemented in migration 006; refund UI implemented locally in
+  `/admin`:** payment verification remains backend-only. The form submits through
+  a server action to the refund RPC, which records append-only rows with
+  idempotency by key, currency copied from the payment and over-refund blocking.
+  The RPC sets payment status to `refunded_partial`/`refunded_full`. OQ-7 was
+  resolved in migration 006: SPEC §12 requires a refund-method field, but not its
+  value domain. `payment_refunds.method` is non-empty free text with no
+  value-domain CHECK or invented value list. By contrast, `payments.method` is
   constrained to `pago_movil`, `cash_usd`, `binance_pay` and `binance_transfer`.
-  Order state
-  transitions stay in their own domain flow (SPEC §10–12).
+  Order state transitions stay in their own domain flow (SPEC §10–12).
 - Sales history, operation history and administrative audit trail (UI still to
   do).
 
@@ -208,7 +212,8 @@ URLs, and approved/rejected payment eligibility.
 
 **Progress:** implemented additively in `supabase/migrations/007_bcv_rates_and_rounding.sql`
 (local-only; no UI, no remote apply, no deployment). Migration 006 is the
-applied baseline; 007 is the next migration and rewrites nothing earlier.
+local validation baseline; 007 is the next migration and rewrites nothing
+earlier.
 
 - **Backend implemented in migration 007 (no UI):** manual BCV rate
   administration through service-role RPCs (`register_bcv_rate`,

@@ -311,10 +311,13 @@ Implementation order (each migration ships with its RLS policies; design source:
       method/currency pairs are EXACTLY `pago_movil`→VES, `cash_usd`→USD,
       `binance_pay`→USDT, `binance_transfer`→USDT; verification invariants call
       the unchanged M3/M5 RPCs (single 20-minute correction window, two-receipt
-      cap, second-rejection cancellation) instead of reimplementing them. No
-      payment/receipt UI. OQ-4/OQ-5 followed in M7 / Phase 5b (migration 007).
-- [ ] **M5 (Phase 5) remaining:** POS/refund **UI**, plus any separately
-      justified status-CHECK widenings. The POS/refund **backend** is already in
+      cap, second-rejection cancellation) instead of reimplementing them. That
+      backend work added no UI; M5 now adds the local admin POS/refund forms.
+      OQ-4/OQ-5 followed in M7 / Phase 5b (migration 007).
+- [x] **M5 (Phase 5) remaining:** POS/refund **UI** implemented locally in
+      `/admin` behind a fail-closed session gate. No status-CHECK widening
+      accompanied this change. Focused local checks were run; final validation
+      and PR remain pending. The POS/refund **backend** is already in
       migration 006, which also resolved OQ-7 by keeping `payment_refunds.method`
       as non-empty free text (no invented value domain). OQ-11 is resolved by
       confirmed decision #36: anonymous in-person POS sales, no customer fields
@@ -652,7 +655,7 @@ Validation (Phase 5 / Payments Module — migration 006, local only):
 - [x] Backend flows covered: guest digital registration with private receipt
       upload, admin cash registration against an existing online order, admin
       approve/reject, offline POS cash sale, append-only refund recording and
-      per-currency summary. No UI was added.
+      per-currency summary. Migration 006 added no UI; M5 adds local admin forms.
 - [x] Boundaries verified locally: declared per-currency amounts only (no
       cross-currency sum, conversion, "fully paid" decision or auto-fulfillment);
       verification separate from fulfillment; admin id session-derived and
@@ -673,8 +676,8 @@ Validation (Phase 5b / OQ-4 + OQ-5 — migration 007, local only):
 
 - [x] Migration 007 applies additively on top of 001–006 on a **disposable local
       PostgreSQL cluster**; migrations 001–006 are untouched and 006 remains the
-      applied baseline. **Not applied to any remote Supabase project, deployed,
-      committed or pushed.**
+      local validation baseline. **Not applied to any remote Supabase project,
+      deployed, committed or pushed.**
 - [x] Schema: `exchange_rates.is_active`, `registered_by`, `supersedes_id`,
       `note`, `idempotency_key`, the source/note checks, the unique idempotency
       key, the active-rate lookup index and the `orders.rounding_rule` domain
@@ -734,8 +737,10 @@ Then, per roadmap phase:
       amendment. Validated locally, not applied remotely or deployed.
 - [x] **Phase 4/5 (Payments Module):** migration 006 implements the payments
       and verification backend described above (four method/currency pairs,
-      per-currency summary, POS cash and refund RPCs, private receipts). Local
-      only; no UI, remote apply, deployment, commit or push.
+      per-currency summary, POS cash and refund RPCs, private receipts).
+      Migration 006 remains local-only; the admin POS/refund UI is implemented
+      locally in `/admin` with fail-closed session gating. No remote apply,
+      deployment, commit or push.
 - [x] **Phase 5b (OQ-4 / OQ-5):** migration 007 adds manual BCV rate history and
       administration, rate lookups with age, atomic per-order snapshots via the
       unchanged `create_online_order`, the `round_half_up` final-total rule,

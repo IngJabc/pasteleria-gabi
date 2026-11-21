@@ -13,8 +13,10 @@ transition and the Phase 6 OQ-16 receipt-review SLA implemented in
 `supabase/migrations/005_receipt_sla_notifications.sql` and validated locally
 (143 tests), not yet applied to any remote Supabase project** (see
 [`TASKS.md`](./TASKS.md)). The Payments Module backend is migration
-`006_payments_and_verification.sql` (the current applied baseline); the OQ-4/OQ-5
-BCV-rate and rounding backend is the additive migration
+`006_payments_and_verification.sql` (local-only; not applied remotely or
+deployed); the admin POS cash-sale and refund UI is implemented locally in
+`/admin` behind a fail-closed session gate. The OQ-4/OQ-5 BCV-rate and rounding
+backend is the additive migration
 `007_bcv_rates_and_rounding.sql` (local-only; not applied remotely or deployed;
 migrations 001–006 untouched). M3 reserves stock for 20 minutes, holds it while a
 submitted receipt is reviewed, allows at most two receipts with one 20-minute
@@ -29,8 +31,10 @@ one fixed 20-minute window in `quote_acceptance_expires_at` and copies it to
 `expires_at`, leaving the historical `initial_expires_at` immutable. Migrations
 004 and 005 have not been applied remotely and the worker is not deployed.
 The public catalog reads active products at request time from the existing
-Supabase tables and renders `/` and `/productos/[slug]`. Other business flows
-remain backend work or placeholders.
+Supabase tables and renders `/` and `/productos/[slug]`. The `/admin` panel now
+renders the local POS cash-sale and refund forms; two-admin auth provisioning
+and the full protected admin shell remain pending. Other business flows remain
+backend work or placeholders.
 The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
@@ -106,7 +110,7 @@ pasteleria-online/
 ├── src/
 │   ├── app/               # Routes only (App Router)
 │   │   ├── (storefront)/  #   customer routes: / and /productos/[slug]
-│   │   └── (admin)/admin/ #   private admin routes: /admin (no data yet)
+│   │   └── (admin)/admin/ #   private admin routes: /admin (local POS/refund UI)
 │   ├── components/        # Shared presentational components (no logic)
 │   ├── features/          # One folder per capability (catalog, checkout, …)
 │   ├── domain/            # Framework-free business types and rules

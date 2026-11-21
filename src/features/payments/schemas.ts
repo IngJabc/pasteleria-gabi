@@ -156,6 +156,9 @@ export function paymentsPublicError(message: string, fallback: string): string {
   if (message.includes("refunds would exceed") || message.includes("was not approved")) {
     return "El reembolso no es válido para este pago.";
   }
+  if (message.includes("pago_movil requires a BCV snapshot")) {
+    return "Este pedido no tiene una tasa BCV válida para pagos en bolívares.";
+  }
   if (message.includes("does not exist") || message.includes("does not require a receipt")) {
     return "La operación de pago ya no está disponible.";
   }

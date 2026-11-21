@@ -37,9 +37,12 @@ RPCs — behaviorally validated on a disposable local PostgreSQL cluster
 (validation details in the final implementation report), **local-only; not
 applied remotely, deployed, committed or pushed**. Migrations 001–005 are
 untouched. This work is called "Phase 4" in older docs and "Phase 5" in tasking;
-both labels refer to the same payments-module scope. The exchange-rate write
-path (§10.1 — OQ-4), the checkout/payment/tracking **UI**, Realtime publication
-and the remaining §11 functions of later phases stay design only. Every
+both labels refer to the same payments-module scope. Migration
+`007_bcv_rates_and_rounding.sql` subsequently adds the exchange-rate write path
+(§10.1 — OQ-4) and the rounding rule (OQ-5) as an **additive** change; 006 remains
+the applied baseline and 007 rewrites nothing earlier. The
+checkout/payment/tracking **UI**, Realtime publication and the remaining §11
+functions of later phases stay design only. Every
 table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
@@ -573,10 +576,10 @@ phases.
 | `delivery_fee_usd` | numeric(10,2) | yes | snapshot of the applied fee; `CHECK >= 0`; null while a manual quote is pending (SPEC §6) or when pickup |
 | `subtotal_usd` | numeric(10,2) | no | server-computed snapshot (SPEC §4) |
 | `total_usd` | numeric(10,2) | no | server-computed snapshot (SPEC §4) |
-| `bcv_rate_ves` | numeric(12,4) | yes | applied BCV rate snapshot (SPEC §4); `CHECK > 0` — see open question OQ-4 |
-| `bcv_rate_at` | timestamptz | yes | timestamp of that rate (SPEC §4) |
-| `total_ves` | numeric(14,2) | yes | `CHECK >= 0`; VES total calculated with the snapshot (SPEC §4) |
-| `rounding_rule` | text | yes | **which** rule was applied (SPEC §4) — the rule itself is undefined, see OQ-5 |
+| `bcv_rate_ves` | numeric(12,4) | yes | applied BCV rate snapshot (SPEC §4); `CHECK > 0`. Filled by migration 007 (OQ-4) — the exact rate, never overwritten |
+| `bcv_rate_at` | timestamptz | yes | timestamp of that rate (SPEC §4); migration 007 stores the rate's own `observed_at`, not the application time |
+| `total_ves` | numeric(14,2) | yes | `CHECK >= 0`; VES total calculated with the snapshot (SPEC §4); migration 007 stores `round(total_usd * rate, 2)` |
+| `rounding_rule` | text | yes | **which** rule was applied (SPEC §4); migration 007 (OQ-5) constrains it to `'round_half_up'` on every snapshot |
 | `receipt_attempts` | integer | no | default 0; `CHECK (receipt_attempts BETWEEN 0 AND 2)` — number of receipt submissions (original + at most one correction), incremented atomically by `hold_order_reservations`; the second rejection cancels the order. M3 correction (confirmed rules) |
 | `quote_accepted_at` | timestamptz | yes | **M4 (OQ-17):** set **once** by the customer's explicit fee acceptance through the private tracking token; serves as the idempotency marker and audit timestamp. Null while the quote is pending. Partial descending index `orders_quote_accepted_at_idx` |
 | `created_at` / `updated_at` | timestamptz | no | |
@@ -685,8 +688,10 @@ state change. **Implemented in migration 006** (local only, additive; no UI).
   **grouped by currency** (§11). Raw amounts are **never** summed across
   currencies. There is no authoritative conversion, cross-currency "fully paid"
   decision or auto-fulfillment; the declared amounts are what administrators
-  verify. OQ-4 (BCV rate write path), OQ-5 (rounding rule) and Binance-receipt
-  discovery remain OPEN — this is a documented gap, not a business rule.
+  verify. Binance-receipt discovery remains OPEN — this is a documented gap,
+  not a business rule. OQ-4 (BCV rate write path) and OQ-5 (rounding rule) were
+  resolved by migration 007 without introducing any cross-currency arithmetic:
+  the VES total is a reporting snapshot, not a payment amount.
 - **Change (vuelto):** derived as `amount_tendered_usd − order.total_usd` at
   registration time — not stored (SPEC §5 asks only to *calculate* it).
 
@@ -759,25 +764,46 @@ it, and resolution records who decided.
 ### 10.1 `exchange_rates`
 
 **Purpose:** SPEC §4 — store every retrieved BCV rate historically and serve
-the "last known rate" fallback with its age. The **query mechanism is a pending
-discovery item** (SPEC §19); this design only defines where rates live.
+the active/last-known rate with its age. **Migration 007 (Phase 5b) implements
+manual administration of these rows** (no automatic provider ingestion): the
+latest ACTIVE rate at/before an instant is authoritative, a correction
+deactivates the old row and links a new one via `supersedes_id`, and existing
+orders keep their inline snapshot so history is never rewritten.
 
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
 | `id` | bigint identity | no | PK |
 | `rate_ves_per_usd` | numeric(12,4) | no | `CHECK (rate_ves_per_usd > 0)` |
 | `observed_at` | timestamptz | no | timestamp reported by the source, UNIQUE |
-| `source` | text | yes | where it came from — undefined until OQ-4/SPEC §19 resolves |
+| `source` | text | yes | where it came from; migration 007 requires a non-empty trimmed value (≤ 120 chars) at registration |
 | `created_at` | timestamptz | no | when we stored it |
+| `is_active` | boolean | no | **007** — default true; only active rows are eligible for snapshotting |
+| `registered_by` | uuid | yes | **007** — FK to `administrators.id` (SET NULL), session-derived admin |
+| `supersedes_id` | bigint | yes | **007** — FK to this table (RESTRICT); correction lineage |
+| `note` | text | yes | **007** — optional admin note (≤ 500 chars) |
+| `idempotency_key` | text | yes | **007** — unique, prevents duplicate registrations |
 
-- **Indexes:** `exchange_rates_observed_at_key` (unique) serves both "rate at
-  time X" and "latest rate" lookups.
+- **Indexes:** `exchange_rates_observed_at_key` (unique) plus **007's**
+  `exchange_rates_active_lookup_idx (is_active, observed_at desc)` serve "rate
+  at time X" and "latest active rate" lookups.
 - **Note:** orders store the applied rate **inline** (snapshot columns, §7.1)
   with **no FK** to this table — a historical order must keep its financial
-  snapshot even if rate rows are ever edited or pruned.
-- **Status (M3):** the table, CHECKs, unique `observed_at` and RLS (admin ALL
-  plus the documented anon SELECT) are implemented in migration `003`; no write
-  path exists yet — rate ingestion is OQ-4 (Phase 4).
+  snapshot even if rate rows are ever edited or pruned. Migration 007 stores
+  `bcv_rate_at = exchange_rates.observed_at` (the rate's own timestamp) and
+  refuses to overwrite an existing snapshot.
+- **Status:** the table, CHECKs, unique `observed_at` and RLS (admin ALL plus
+  the documented anon SELECT) were implemented in migration `003`; migration
+  `007` adds the columns above, the constraints/index and the service-role RPCs
+  `register_bcv_rate`, `deactivate_bcv_rate`, `get_bcv_rate` and
+  `get_last_ves_per_usd` (plus the atomic creation path and legacy snapshot
+  wrappers in §11). No automatic BCV API/worker/credential is introduced.
+- **Payment guard:** migration 007 adds a `BEFORE INSERT` trigger on `payments`
+  that rejects `pago_movil` (VES) rows unless the order has a complete BCV
+  snapshot and VES total. It covers guest, admin, direct-RPC and POS entry points;
+  USD/USDT flows are unchanged. A `BEFORE UPDATE` trigger on `orders` blocks any
+  change to an existing snapshot, including privileged direct updates. The
+  stale-rate maximum age is an **unresolved business decision**: `is_stale` is
+  informational only and no threshold is enforced.
 
 ### 10.2 `audit_log`
 
@@ -808,7 +834,9 @@ No table duplicates another table's state. Everything derived is computed:
 | --- | --- | --- | --- |
 | `create_inventory_batch(p_product_id, p_initial_quantity, p_production_date)` | function | authenticated admins (internal `is_admin()` check) | atomic **entry**: inserts the new batch (remaining = initial), its `entry` movement and the `inventory.batch_create` audit row in one transaction — implemented in migration 002 (Phase 2) |
 | `get_product_stock(p_product_id)` | function | service role (server-rendered storefront) | available / reserved / remaining aggregates — keeps `production_date` away from the public entirely (SPEC §8); migration 002 shipped it with `available = remaining` and `reserved = 0`, and migration **003** replaces it (`create or replace`, same signature) so availability subtracts active, unexpired reservations per §6.2 |
-| `create_online_order(...)` | function | service role only | validates products/zones, recomputes all totals from `products`, allocates FIFO batches, writes snapshots + reservations (`expires_at = created_at + 20 min`, or `NULL` for held manual-quote deliveries), returns `{order_id, tracking_token}` once — implemented in migration 003 (Phase 3) |
+| `create_online_order(...)` | function | service role only | validates products/zones, recomputes all totals from `products`, allocates FIFO batches, writes snapshots + reservations (`expires_at = created_at + 20 min`, or `NULL` for held manual-quote deliveries), returns `{order_id, tracking_token}` once — implemented in migration 003 (Phase 3), unchanged by 007 |
+| `create_online_order_with_bcv(...)` | function | service role only | **Canonical checkout (migration 007):** calls the unchanged `create_online_order` and resolves the latest active BCV rate **inside the database**, writing `bcv_rate_ves`, `bcv_rate_at`, `total_ves` and `rounding_rule = 'round_half_up'` in the **same transaction**. No client rate/timestamp is accepted; no active rate means a USD-only order with all four BCV fields NULL; a snapshot failure rolls back the whole creation. Returns the `create_online_order` payload plus `bcv_applied` and the snapshot fields |
+| `apply_bcv_rate_for_tracking(p_token)` / `apply_bcv_rate_to_order(p_order_id, p_admin_id)` | functions | service role only | **Legacy/manual** one-time snapshot tools (migration 007) for orders created before 007 or through the 003 RPC directly; delegate to `private.snapshot_bcv_rate`, which locks the order, refuses to overwrite an existing snapshot, uses the rate's own `observed_at` and applies `round(total_usd * rate, 2)`. The canonical path does not use them |
 | `hold_order_reservations(p_order_id)` | function | service role only | receipt submitted: increments `orders.receipt_attempts` (max 2; third submission raises P0001) and suspends the operative deadline (`expires_at = NULL`, OQ-15 confirmed) for every active reservation; a repeat on an already-held order is an idempotent no-op that consumes no attempt — implemented in migration 003 |
 | `open_order_correction_window(p_order_id)` | function | service role only | receipt rejected: with 1 attempt, sets `correction_window_ends_at = expires_at = rejection_time + 20 min` **once** (repeat rejections never extend it); with 2 attempts, cancels the order and releases all active reservations atomically (no movement); with 0 attempts, raises P0001; a repeat after cancellation returns 0 — OQ-14 confirmed, implemented in migration 003 |
 | `release_expired_reservations()` | function | service role only | lazy expiry cleanup: flips reservations past their operative deadline (20 min initial / one 20 min correction window) to `expired` and expires the pending order — implemented in migration 003 (Phase 3) |
@@ -939,8 +967,8 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-1 | The two administrators' e-mail addresses (not in SPEC §19) | Provisioning auth accounts + `administrators` seed |
 | OQ-2 | Final catalog: names, descriptions, prices, photos (SPEC §19) | Product seed data, slugs |
 | OQ-3 | Exact geographic limits of the "north zone" (SPEC §19) | `delivery_zones.description` content + customer classification UX (table itself is not blocked) |
-| OQ-4 | How the BCV rate is queried/stored, and whether **USD-only orders** also snapshot the rate (SPEC §4, §19) | `exchange_rates` write path; nullability of `bcv_rate_*`/`total_ves` |
-| OQ-5 | The actual rounding rule to record in `rounding_rule` (SPEC §4 requires the snapshot, never defines the rule) | Phase 4 totals calculation |
+| OQ-4 | How the BCV rate is queried/stored, and whether **USD-only orders** also snapshot the rate (SPEC §4, §19) | **Resolved (Phase 5b / migration 007):** manual admin registration, append-only active history, latest-active lookup with age, explicit failure when none exists, exact per-order snapshot (including USD-only orders when requested); no automatic provider ingestion (future item) |
+| OQ-5 | The actual rounding rule to record in `rounding_rule` (SPEC §4 requires the snapshot, never defines the rule) | **Resolved (Phase 5b / migration 007):** `round_half_up` (half away from zero) applied once to the final VES total, recorded on each snapped order; no per-item rounding |
 | OQ-6 | Shape of Pago Móvil receiver data (SPEC §19) | `store_settings.payment_instructions` structure (Phase 4) |
 | OQ-7 | Allowed refund methods (SPEC §12 requires the field, not the value list) | `payment_refunds.method` CHECK (Phase 5) |
 | OQ-8 | Shape of attention/preparation schedules (SPEC §14) | `store_settings.business_hours` structure (Phase 6) |
@@ -954,12 +982,13 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved (DECISIONS #25) and implemented in Phase 6** by migration 005 + `supabase/worker/sla-worker.mjs` (validated locally, not applied remotely/deployed): each receipt submission starts its own 24-hour clock; every active administrator receives a durable in-app notification on the first worker run after the deadline, repeated every 15 minutes until that submission is approved/rejected; dedupe key `(receipt_submission_id, admin_id, interval_bucket)`. **Never** auto-cancels the order or releases inventory; no change to M3/M4 status or reservation rules |
 | OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally, not applied remotely): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
 
-**Still open after migration 006 (Payments Module):** OQ-7 (refund method value
-domain — stored as non-empty free text, no domain invented), OQ-11 (POS customer
-identity), OQ-12 (guest receipt re-view), OQ-4 (BCV rate write path) and OQ-5
-(rounding rule). The specific Binance identifier/receipt data and modality
-details (SPEC §19) and the cash-on-delivery/combined-payment operating policy
-are also still open. Migration 006 adds no conversion rule, cross-currency
-"fully paid" decision or auto-fulfillment; declared component amounts are what
-administrators verify. None of these questions is resolved by this work.
+**Still open after migration 007:** OQ-7 (refund method value domain — stored as
+non-empty free text, no domain invented), OQ-11 (POS customer identity), OQ-12
+(guest receipt re-view). The specific Binance identifier/receipt data and
+modality details (SPEC §19) and the cash-on-delivery/combined-payment operating
+policy are also still open. OQ-4 and OQ-5 are **resolved** by migration 007
+(manual rate history, exact snapshot and `round_half_up` on the final VES total).
+Neither migration 006 nor 007 adds a conversion rule for payment components,
+a cross-currency "fully paid" decision or auto-fulfillment; declared component
+amounts are what administrators verify.
 

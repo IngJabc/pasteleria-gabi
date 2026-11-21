@@ -36,8 +36,14 @@ validation invariants) is implemented in
 on a disposable local PostgreSQL cluster (details in the final implementation
 report), **local-only; not applied remotely, deployed, committed or pushed**.
 Migrations 001–005 are untouched. Historical docs call this scope "Phase 4",
-tasking calls it "Phase 5"; both names refer to the same backend.
-Policies for later migrations remain proposals, derived from
+tasking calls it "Phase 5"; both names refer to the same backend. The
+Phase 5b / OQ-4 + OQ-5 subset (§4 rate history RLS unchanged, §5 service-role
+rate/snapshot RPCs, §6/§7/§8 admin attribution, idempotency and rounding
+invariants) is implemented additively in
+`supabase/migrations/007_bcv_rates_and_rounding.sql`: behaviorally validated on a
+disposable local PostgreSQL cluster, **local-only; not applied remotely,
+deployed, committed or pushed**. Migrations 001–006 are untouched and 006 remains
+the applied baseline. Policies for later migrations remain proposals, derived from
 [`SPEC.md`](../SPEC.md) §16
 and the invariants in
 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) §5. Table/column definitions live in
@@ -421,7 +427,10 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 | Refunds never rewrite history | New `payment_refunds` rows only; original payment row keeps amount/reference/receipt |
 | Audit of admin operations | `audit_log` append-only, RLS INSERT attributed to `(select auth.uid())` |
 | Supported payment pairs (migration 006) | DB CHECK allows EXACTLY `pago_movil`→VES, `cash_usd`→USD, `binance_pay`→USDT, `binance_transfer`→USDT; no other method/currency is stored. Binance's identifier/receipt details remain an open discovery item |
-| Per-currency payment facts only | `get_order_payment_summary` groups by currency; no cross-currency sum, conversion, "fully paid" decision or auto-fulfillment. Declared component amounts are administrator-verified; OQ-4/OQ-5 remain OPEN (documented gap, not a business rule) |
+| Per-currency payment facts only | `get_order_payment_summary` groups by currency; no cross-currency sum, conversion, "fully paid" decision or auto-fulfillment. Declared component amounts are administrator-verified (documented gap, not a business rule). Migration 007 resolves OQ-4/OQ-5 only for the **informational VES order snapshot**; it never converts or sums declared payment components |
+| BCV rate administration (migration 007) | `exchange_rates` rows are append-only; `is_active`, `supersedes_id`, unique `idempotency_key` and audit rows are enforced in the database. Mutating RPCs (`register_bcv_rate`, `deactivate_bcv_rate`, `apply_bcv_rate_to_order`, the private `snapshot_bcv_rate` helper and the guest `apply_bcv_rate_for_tracking`) are `service_role`-only, `SECURITY INVOKER`, pinned `search_path`, and recheck `private.require_active_admin` where an administrator is involved — no `auth.uid()` and no client-supplied admin id. Rate reads (`get_bcv_rate`, `get_last_ves_per_usd`) are read-only and least-privilege; anon can still only SELECT `exchange_rates` |
+| Rate snapshot integrity (migration 007) | The canonical `create_online_order_with_bcv` calls the unchanged 003 creation logic and snapshots the DB-resolved rate in the **same transaction**; the order row is locked (`FOR UPDATE`) before writing. No client-supplied rate or timestamp is accepted. No active rate → a USD-only order with all four BCV fields NULL; a snapshot failure rolls back the order and its reservations. Existing snapshots are never overwritten: the legacy guest/admin wrappers are no-op replays and a `BEFORE UPDATE` trigger on `orders` blocks even privileged direct changes to a historical snapshot. `bcv_rate_at` is the rate's own `observed_at`, and `rounding_rule` is constrained to `round_half_up` applied once to the final VES total. `is_stale` is informational only; no maximum age is invented or enforced (unresolved business decision) |
+| Pago Móvil snapshot precondition (migration 007) | A `BEFORE INSERT` trigger on `payments` rejects any `pago_movil`/VES row whose order lacks a complete BCV snapshot and VES total. It is database-level, so it covers direct RPC, guest, admin and POS entry points, not just Server Action validation; USD and USDT payments are unaffected. Idempotent replays still bypass the insert, preserving migration 006 idempotency. The stable SQL message is mapped to clear Spanish text without leaking SQL |
 | Payment verification is not fulfillment | The migration 006 approve/reject RPCs do not advance `orders.status`, write inventory movements, consume/release reservations or change `receipt_attempts`. The unchanged M3/M5 RPCs are the only implementation of the two-receipt cap, single 20-minute correction window and second-rejection cancellation; migration 006 delegates to them |
 | Evidence linkage and single pending submission | `receipt_submissions.payment_id` links the OQ-16 review/SLA history to ONE payment component; partial UNIQUE indexes allow at most one pending submission per order and per payment. Cash creates no submission, needs no receipt and never increments `receipt_attempts`; digital methods need a server-validated private path and reference, so the existing two-receipt cap permits only two digital evidence submissions per order |
 | Admin id is session-derived, not client-supplied | The server action verifies the session with `auth.getUser()` and the active `administrators` row via the existing RLS pattern; every mutating RPC rechecks with `private.require_active_admin`. No RPC reads `auth.uid()`. Guest flows use only the private tracking token; public errors do not leak SQL details |
@@ -491,6 +500,18 @@ private bucket, service-role RPCs, idempotency and concurrency boundaries) was
 validated behaviorally on a disposable local PostgreSQL cluster; validation
 details are in the final implementation report. Migration 006 is **local-only**
 — no remote apply, deployment, commit or push. Open items OQ-7, OQ-11, OQ-12,
-OQ-4, OQ-5, the Binance identifier/modality details and the cash-on-delivery
-policy are unchanged by it.
+the Binance identifier/modality details and the cash-on-delivery policy are
+unchanged by it.
+
+Phase 5b update: the migration 007 subset (rate history, service-role rate and
+snapshot RPCs, session-derived admin attribution, idempotency, row locking,
+single round-half-up rule and least-privilege grants) was validated behaviorally
+and statically on a disposable local PostgreSQL cluster; validation details are
+in the final implementation report. The focused integration follow-up added the
+atomic `create_online_order_with_bcv` path, the Pago Móvil snapshot trigger and
+the table-level snapshot immutability trigger to the same migration 007, with
+behavioral coverage for rollback, concurrent creation/rate changes, every
+payment entry point and all immutability paths. Migration 007 is **local-only** —
+no remote apply, deployment, commit or push. OQ-4 and OQ-5 are resolved by it;
+the stale-rate threshold and all other open items above remain open.
 

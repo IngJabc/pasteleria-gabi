@@ -41,6 +41,7 @@ describe("migration 004 contract (static)", () => {
       "004_quote_acceptance.sql",
       "005_receipt_sla_notifications.sql",
       "006_payments_and_verification.sql",
+      "007_bcv_rates_and_rounding.sql",
     ]);
   });
 

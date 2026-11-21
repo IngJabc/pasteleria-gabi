@@ -214,11 +214,12 @@ items further down have not started.
 
 Not blocking Phase 1B (tracked for later phases): OQ-3 delivery-zone boundaries
 (affects zone *content*), OQ-4/OQ-5 BCV rate source and rounding rule
-(Phase 4), OQ-6 Pago Móvil data (Phase 4), OQ-7 refund methods (Phase 5),
+(Phase 5b), OQ-6 Pago Móvil data (Phase 4), OQ-7 refund methods (Phase 5),
 OQ-8 schedules (Phase 6) and OQ-9…OQ-12 confirmations at their phase.
 OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are resolved as rules
 (see `docs/DATABASE_DESIGN.md` §14); OQ-16 and OQ-17 are also implemented
-locally in Phases 6 and 4 respectively.
+locally in Phases 6 and 4 respectively. **OQ-4 and OQ-5 were subsequently
+resolved and implemented locally in Phase 5b (migration 007).**
 
 Implementation order (each migration ships with its RLS policies; design source:
 `docs/DATABASE_DESIGN.md`, policies: `docs/SECURITY_DESIGN.md`):
@@ -307,7 +308,7 @@ Implementation order (each migration ships with its RLS policies; design source:
       `binance_pay`→USDT, `binance_transfer`→USDT; verification invariants call
       the unchanged M3/M5 RPCs (single 20-minute correction window, two-receipt
       cap, second-rejection cancellation) instead of reimplementing them. No
-      payment/receipt UI.
+      payment/receipt UI. OQ-4/OQ-5 followed in M7 / Phase 5b (migration 007).
 - [ ] **M5 (Phase 5) remaining:** POS/refund **UI**, OQ-7 (refund method domain)
       and OQ-11 (POS customer identity) confirmations, and any status-CHECK
       widenings. The POS/refund **backend** is already in migration 006.
@@ -482,7 +483,8 @@ loopback port, torn down afterwards) via
 - [x] Checkout: server-side recompute (prices from `products`, fee from
       `delivery_zones`, `requires_quote` zones snapshot a NULL fee), line
       snapshots, 64-hex token returned once with only `sha256(token)` stored,
-      `bcv_rate_*`/`total_ves`/`rounding_rule` NULL (OQ-4/OQ-5).
+      `bcv_rate_*`/`total_ves`/`rounding_rule` NULL (OQ-4/OQ-5 at that point;
+      now filled by migration 007, Phase 5b).
 - [x] Atomicity: invalid input, unknown/inactive product, unknown zone and
       insufficient stock all roll back with no order, no items, no
       reservations (named SQLSTATEs: 22023 / P0002 / P0001).
@@ -616,9 +618,53 @@ Validation (Phase 5 / Payments Module — migration 006, local only):
       rechecked by `private.require_active_admin` in every mutating RPC; no RPC
       reads `auth.uid()`; idempotency keys, row locks, deterministic lock order
       and advisory locks for POS/refund; public errors do not leak SQL details.
-- [x] Open after this work: OQ-7, OQ-11, OQ-12, OQ-4, OQ-5, Binance
-      identifier/modality details and the cash-on-delivery policy. No exact
-      counts are recorded here; see the final implementation report.
+- [x] Open after this work: OQ-7, OQ-11, OQ-12, Binance identifier/modality
+      details and the cash-on-delivery policy. OQ-4 and OQ-5 were resolved later
+      in Phase 5b (migration 007). No exact counts are recorded here; see the
+      final implementation report.
+
+Validation (Phase 5b / OQ-4 + OQ-5 — migration 007, local only):
+
+- [x] Migration 007 applies additively on top of 001–006 on a **disposable local
+      PostgreSQL cluster**; migrations 001–006 are untouched and 006 remains the
+      applied baseline. **Not applied to any remote Supabase project, deployed,
+      committed or pushed.**
+- [x] Schema: `exchange_rates.is_active`, `registered_by`, `supersedes_id`,
+      `note`, `idempotency_key`, the source/note checks, the unique idempotency
+      key, the active-rate lookup index and the `orders.rounding_rule` domain
+      check; no new tables and no seeds. RLS/forced RLS unchanged.
+- [x] Rate administration: manual registration with positive/≤ 4-decimal rate,
+      non-empty source, session-derived active admin, idempotency key and audit
+      rows; correction deactivates the replaced row only after a successful
+      insert; standalone deactivation is idempotent; invalid admin/rate/source
+      rejected at the database boundary.
+- [x] Rate reads: latest **active** rate at/before an instant with source,
+      `observed_at`, `age_seconds` and `is_stale`; historical as-of lookups;
+      explicit null when none exists — no invented fallback.
+- [x] Snapshots: guest (hashed tracking token) and admin wrappers lock the order,
+      store the exact rate and its own `observed_at`, never overwrite an existing
+      snapshot and audit only administrative applies; concurrent applies are
+      serialised; no active rate / invalid token / closed order fail explicitly.
+- [x] OQ-5: `round_half_up` applied once to the final VES total (boundary case
+      374.125 → 374.13 verified), recorded as `orders.rounding_rule`; no
+      per-item rounding, no cross-currency sum, no "fully paid" rule, no
+      automatic fulfillment; declared payment amounts keep 2 decimals.
+- [x] Least privilege: all mutating RPCs and the private snapshot helper grant
+      EXECUTE only to `service_role`; rate reads stay public; every function is
+      `SECURITY INVOKER` with `search_path = ''` and no RPC uses `auth.uid()`;
+      Spanish-facing errors never leak SQL details.
+- [x] Backend server actions (`src/features/exchange-rates/`) with Zod
+      validation and mocked tests; no UI was added.
+- [x] **Focused integration audit fixes (migration 007):** canonical
+      `create_online_order_with_bcv` calls unchanged `create_online_order` and
+      snapshots the DB-resolved active rate in the same transaction; no rate
+      means a NULL-field USD-only order; snapshot failure rolls back the order
+      and reservations. Snapshots are immutable through guest/admin legacy
+      wrappers and direct privileged updates. Pago Móvil requires a complete
+      snapshot via a database trigger on every payment entry point; USD/USDT
+      unaffected. Concurrent creation/rate-change and all boundary cases covered
+      by behavioral tests. Stale-rate maximum age documented as unresolved.
+- [x] Validated locally; final exact counts are in the implementation report.
 
 Then, per roadmap phase:
 
@@ -644,6 +690,12 @@ Then, per roadmap phase:
       and verification backend described above (four method/currency pairs,
       per-currency summary, POS cash and refund RPCs, private receipts). Local
       only; no UI, remote apply, deployment, commit or push.
+- [x] **Phase 5b (OQ-4 / OQ-5):** migration 007 adds manual BCV rate history and
+      administration, rate lookups with age, atomic per-order snapshots via the
+      unchanged `create_online_order`, the `round_half_up` final-total rule,
+      Pago Móvil snapshot enforcement and snapshot immutability, with server
+      actions and local tests. Local only; no UI, remote apply, deployment,
+      commit or push.
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

@@ -12,7 +12,11 @@ transition and the Phase 6 OQ-16 receipt-review SLA implemented in
 `supabase/migrations/004_quote_acceptance.sql` and
 `supabase/migrations/005_receipt_sla_notifications.sql` and validated locally
 (143 tests), not yet applied to any remote Supabase project** (see
-[`TASKS.md`](./TASKS.md)). M3 reserves stock for 20 minutes, holds it while a
+[`TASKS.md`](./TASKS.md)). The Payments Module backend is migration
+`006_payments_and_verification.sql` (the current applied baseline); the OQ-4/OQ-5
+BCV-rate and rounding backend is the additive migration
+`007_bcv_rates_and_rounding.sql` (local-only; not applied remotely or deployed;
+migrations 001–006 untouched). M3 reserves stock for 20 minutes, holds it while a
 submitted receipt is reviewed, allows at most two receipts with one 20-minute
 correction window, and auto-cancels on the second rejection. The final open
 questions are resolved in [`docs/DECISIONS.md`](./docs/DECISIONS.md) (#25/#26):

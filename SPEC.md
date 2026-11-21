@@ -73,6 +73,29 @@ La tasa deberá consultarse automáticamente y conservarse históricamente.
 
 Si el servicio de consulta no está disponible, se podrá utilizar la última tasa válida almacenada, informando su antigüedad. Nunca se utilizará una tasa desconocida.
 
+**Implementación (migración 007; backend local, sin interfaz):** la tasa BCV se
+registra **manualmente** por un administrador (sin consumo automático de API,
+worker ni credenciales nuevas). Se conserva el historial completo de tasas con
+estado `is_active`; las correcciones desactivan la fila anterior y crean una
+nueva que la referencia (`supersedes_id`), sin borrar ni editar historial. La
+tasa activa más reciente en o antes de un instante es la única que se aplica; si
+no existe, la operación falla con un mensaje explícito y el pedido conserva su
+total en USD. `get_bcv_rate` informa la tasa, su origen, su fecha/hora y su
+antigüedad (`age_seconds`, `is_stale`). Cada pedido conserva la tasa exacta
+usada en `bcv_rate_ves`/`bcv_rate_at` (la fecha/hora es la de la **tasa**, no la
+de la aplicación); un snapshot existente nunca se sobrescribe, de modo que
+corregir una tasa no reescribe el historial. La ruta canónica de creación
+(`create_online_order_with_bcv`) toma la tasa dentro de la base de datos y
+escribe el snapshot en la **misma transacción** que el pedido; sin tasa activa,
+el pedido se crea con los cuatro campos BCV en NULL. Un pago `pago_movil`
+requiere un snapshot BCV completo. La regla de redondeo es
+`round_half_up` (media hacia arriba), aplicada **una sola vez** al total final
+en VES (`total_ves`), nunca por Ítem ni a los importes declarados de pago, que
+siguen con 2 decimales. No se suman importes entre monedas ni se decide
+"pagado por completo" ni se avanza el cumplimiento del pedido. La consulta
+automática a un proveedor queda como mejora futura separada (fuera de este
+alcance).
+
 ## 5. Métodos de pago
 
 Métodos previstos:
@@ -140,11 +163,11 @@ revisión/rechazados/devueltos y conteos de pagos **por moneda**; los importes
 brutos nunca se suman entre monedas. No hay conversión autoritativa, decisión de
 "pagado por completo" entre monedas ni cumplimiento automático: los importes son
 valores declarados de cada componente que los administradores verifican. Esta
-ausencia es una brecha documentada, no una regla de negocio. Siguen abiertos OQ-4
-(ruta de escritura de la tasa BCV), OQ-5 (regla de redondeo) y el descubrimiento
-del comprobante de Binance. La documentación técnica denominaba este alcance
-"Fase 4" y las tareas lo denominan "Fase 5"; ambos nombres designan el mismo
-módulo de pagos.
+ausencia es una brecha documentada, no una regla de negocio. OQ-4 (ruta de
+escritura de la tasa BCV) y OQ-5 (regla de redondeo) quedan implementados en la
+migración 007 (§4); sigue abierto el descubrimiento del comprobante de Binance.
+La documentación técnica denominaba este alcance "Fase 4" y las tareas lo
+denominan "Fase 5"; ambos nombres designan el mismo módulo de pagos.
 
 ## 6. Delivery y retiro
 
@@ -432,17 +455,23 @@ No se fijará una identidad definitiva hasta que el negocio apruebe una propuest
 - Dirección de retiro.
 - Número de WhatsApp.
 - Horarios concretos.
-- Definir cómo se consulta y actualiza la tasa BCV.
+- Definir cómo se consulta y actualiza la tasa BCV (ruta manual implementada en
+  la migración 007; la consulta automática a un proveedor sigue pendiente).
 - Precisar los límites geográficos de la zona norte para la clasificación que hará el cliente.
 - Definir el tratamiento operativo de pedidos con efectivo contra entrega y pagos combinados.
 - Definir la política comercial para pedidos con cotización de delivery (el plazo de reserva tras la aceptación de la tarifa ya está definido en las secciones 6 y 8; falta la política comercial en sí).
 
-Tras la migración 006 siguen abiertos: OQ-7 (métodos de devolución), OQ-11
+Tras la migración 006 seguían abiertos: OQ-7 (métodos de devolución), OQ-11
 (identidad del cliente en POS), OQ-12 (revisión del comprobante por el invitado),
 OQ-4 y OQ-5 (tasa BCV y redondeo), el identificador y los datos de recepción de
 Binance (incluida la modalidad técnica de ambas variantes) y la política
-operativa de efectivo contra entrega y pagos combinados. Ninguno se resuelve en
-esta migración.
+operativa de efectivo contra entrega y pagos combinados. La migración 007
+resuelve **OQ-4 y OQ-5** (§4: registro manual de tasas, consulta con historial y
+antigüedad, snapshot exacto por pedido y redondeo `round_half_up`); los demás
+puntos siguen abiertos. El snapshot se captura ahora de forma atómica dentro de
+la creación del pedido (`create_online_order_with_bcv`); un pago `pago_movil`
+exige un snapshot BCV completo, y la antigüedad máxima aceptable de la tasa
+sigue siendo una decisión de negocio pendiente (`is_stale` es informativo).
 
 Estos pendientes no impiden avanzar con el diseño visual ni con la arquitectura inicial, pero deberán resolverse antes de implementar los flujos afectados.
 

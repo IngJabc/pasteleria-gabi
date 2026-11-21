@@ -43,6 +43,9 @@ both labels refer to the same payments-module scope. Migration
 the applied baseline and 007 rewrites nothing earlier. Migration
 `008_realtime_publication.sql` then publishes three existing tables to Supabase
 Realtime additively (§11 status below); it changes no policy, grant or table.
+Migration `009_store_settings_schedule.sql` defines the OQ-8 schedule contract
+on the existing `store_settings` singleton (§4.1) with a CHECK constraint and
+server-side validation; it adds no table, column, seed or write permission.
 The checkout/payment/tracking **UI** and the remaining §11 functions of later
 phases stay design only. Every
 table below is a
@@ -229,7 +232,7 @@ are `jsonb` placeholders — deliberately **not** shaped in advance.
 | `id` | smallint | no | PK with `CHECK (id = 1)` — singleton |
 | `pickup_address` | text | yes | configured from the panel (SPEC §6) |
 | `whatsapp_phone` | text | yes | displayed/shared for manual WhatsApp contact (SPEC §13) |
-| `business_hours` | jsonb | yes | **shape defined in Phase 6** when schedules are implemented (SPEC §14) |
+| `business_hours` | jsonb | yes | **OQ-8 shape defined in migration 009** (SPEC §14): `{"timezone":"America/Caracas","attention":{weekday:[{start,end}]},"pickup":{weekday:[{start,end}]}}`; `[]` is a closed day, intervals are HH24:MI, ordered and non-overlapping. NULL stays valid. CHECK `store_settings_business_hours_check` validates it. Informational only — never read by checkout/payment/inventory/reservation logic |
 | `payment_instructions` | jsonb | yes | **shape defined in Phase 4** from real Pago Móvil data (SPEC §5, §19 pending) |
 | `updated_at` | timestamptz | no | trigger-maintained |
 | `updated_by` | uuid | yes | FK `administrators` (set null) |
@@ -237,6 +240,15 @@ are `jsonb` placeholders — deliberately **not** shaped in advance.
 - **Invariant:** this table contains only customer-facing configuration; no
   secrets (secrets live in environment variables).
 - **Relationships:** many-to-one `administrators` (who last edited).
+- **OQ-8 implementation (migration 009):** no new table/column/seed. The two pure
+  validators `private.valid_store_time(text)` and
+  `private.validate_business_hours(jsonb)` are `IMMUTABLE`, `search_path = ''`,
+  and granted only to `authenticated`/`service_role` so constraint and RLS
+  evaluation work for the same roles. Pickup address remains the original free
+  text `pickup_address`. Server-side writes go through
+  `src/features/settings/admin-settings.ts` (Zod-validated, session-derived
+  admin id, cookie-bound client under the unchanged admin RLS policy, no
+  service-role bypass or client-supplied identity). No address or hour is seeded.
 
 ### 4.2 `delivery_zones`
 
@@ -985,7 +997,7 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-5 | The actual rounding rule to record in `rounding_rule` (SPEC §4 requires the snapshot, never defines the rule) | **Resolved (Phase 5b / migration 007):** `round_half_up` (half away from zero) applied once to the final VES total, recorded on each snapped order; no per-item rounding |
 | OQ-6 | Shape of Pago Móvil receiver data (SPEC §19) | `store_settings.payment_instructions` structure (Phase 4) |
 | OQ-7 | Allowed refund methods (SPEC §12 requires the field, not the value list) | `payment_refunds.method` CHECK (Phase 5) |
-| OQ-8 | Shape of attention/preparation schedules (SPEC §14) | `store_settings.business_hours` structure (Phase 6) |
+| OQ-8 | Shape of attention/preparation schedules (SPEC §14) | **Resolved (Phase 6 / migration 009):** `business_hours` JSONB contract with `America/Caracas`, weekly `attention`/`pickup`, closed days `[]`, multiple ordered non-overlapping HH24:MI intervals; DB CHECK + Zod action; no seed values. Actual hours/address remain business data to configure |
 | OQ-9 | SPEC §8 says every movement keeps an "administrator", but automated online-sale movements have no acting admin — proposed: `admin_id` nullable with null = system | **Still open.** Migration 002 shipped the column nullable (design §6.3) but always writes an admin id; migration 003 now writes `sale` movements with `admin_id` NULL (system semantics) — confirm before admin reporting relies on the distinction |
 | OQ-10 | Should the storefront display per-product stock (SPEC §3 lists "inventario disponible" ambiguously)? | Whether `get_product_stock` output is shown publicly (design supports it either way) |
 | OQ-11 | Are walk-in (POS) sales recorded without customer identity? Proposed: yes — all customer columns nullable for `channel = 'pos'` | Phase 5 |

@@ -343,8 +343,9 @@ to the phase that implements them.
 
 **Consequences:** No invented structures to migrate away from later; the table
 is ready on day one. Trade-off: `jsonb` gives up column-level validation until
-the shape is defined — acceptable for two fields nothing reads yet. The table
-never stores secrets (it is publicly readable by design).
+the shape is defined — acceptable for two fields nothing reads yet (OQ-8 is now
+resolved by #35 without adding a column). The table never stores secrets (it is
+publicly readable by design).
 
 ## 23. State machines in the domain layer; the database constrains value domains only — status: accepted
 
@@ -679,3 +680,51 @@ automatic fulfillment is derived from the VES snapshot.
 the single final total, never by doubling a rounded line. Existing money
 precision is unchanged (USD 10,2 / VES 14,2 / rate 12,4). Implemented additively
 in migration 007 (local only).
+
+## 35. `store_settings.business_hours` weekly schedule contract — status: accepted (resolves OQ-8)
+
+**Context:** SPEC §14 requires configurable customer-facing attention and
+preparation hours while keeping orders available 24/7. Migration 001 created
+the singleton `store_settings` row with `pickup_address text` and a nullable
+`business_hours jsonb` placeholder explicitly deferred to OQ-8 (DECISIONS #22).
+No real address or hours were supplied, and no operational rule may turn a
+schedule into a checkout restriction.
+
+**Decision:** Reuse the existing singleton and columns; add no settings table,
+column or seed. `business_hours` is either `NULL` (the backward-compatible
+placeholder) or exactly:
+
+```json
+{
+  "timezone": "America/Caracas",
+  "attention": { "monday": [{ "start": "09:00", "end": "13:00" }], "sunday": [] },
+  "pickup": { "monday": [{ "start": "10:00", "end": "17:00" }], "sunday": [] }
+}
+```
+
+All seven lowercase weekdays are required in both `attention` and `pickup`.
+Each day is an array of zero or more intervals; `[]` means closed. Intervals
+have exactly `start` and `end` in HH24:MI (`00:00 <= start < end <= 23:59`),
+are ordered and non-overlapping; overnight intervals are not supported. The
+timezone is fixed to Venezuela's `America/Caracas` and stored in the document
+so clients never guess. The existing free-text `pickup_address` remains the
+business/pickup address; no new address structure is invented.
+
+**Enforcement:** Migration 009 adds two `IMMUTABLE`, pinned-`search_path`
+private validators and a `CHECK` constraint on `business_hours`. `EXECUTE` is
+granted only to `authenticated` and `service_role` so both RLS admin writes and
+service-side writes can evaluate the constraint; no new table write permission
+is created. `src/features/settings/schemas.ts` mirrors the contract with Zod,
+and `src/features/settings/admin-settings.ts` validates input and derives the
+admin id from the session (`requireActiveAdminId`) before writing through the
+cookie-bound anon-key client, leaving the unchanged admin RLS policy as the
+final check. No service-role bypass or client-supplied admin id is accepted.
+
+**Consequences:** Actual hours and address stay unconfigured until the business
+supplies them; nothing is seeded. Schedules are metadata only: no checkout,
+order, payment, inventory, reservation or worker code reads them, so orders
+remain accepted 24/7. RLS, policies and grants on `store_settings` are
+unchanged (`anon` keeps public SELECT with no write policy; admins keep ALL).
+The JSONB shape is strict, so future fields require an explicit additive
+migration; this is preferable to silently accepting malformed schedules.
+Implemented locally in migration 009; not applied remotely.

@@ -759,7 +759,7 @@ admin panel/POS → realtime/communication/settings).
 
 ---
 
-## Developer automation — reusable autonomous OpenCode workflow (implementation complete, delivery pending)
+## Developer automation: reusable autonomous OpenCode workflow (complete)
 
 Objective:
 `features/autonomous-opencode-workflow` (one branch/PR, no bakery roadmap task).
@@ -804,7 +804,18 @@ Objective:
 - [x] No bakery roadmap task was implemented; no migration, storage policy,
       remote SQL, deployment, secret change, PR merge or push to `main`.
 
-Validation (autonomous workflow): `npm run validate:autopilot`, `npm test`,
-`npm run lint`, `npm run typecheck` and `npm run build`; exact final commands,
-exit codes, commit hash, pushed branch and PR URL are recorded in the delivery
-report once the PR exists.
+Delivery record:
+
+- Feature branch: `features/autonomous-opencode-workflow`
+- Implementation commit: `ff2f9840f83c58b90c48873f2e04543df557272b`
+- Pull request: [PR #10](https://github.com/IngJabc/pasteleria-gabi/pull/10)
+- PR state: closed, merged by `IngJabc` at `2026-11-21T05:13:59Z`
+- Merge commit on `main`: `ca4357163c954afeea1e0fe288232f3936d7f4db`
+
+Validation (autonomous workflow): `npm run validate:autopilot` (235 passed,
+0 failed), `npm test` (26 files, 291 tests passed on the serial run),
+`npm run lint` (0 errors, 2 pre-existing warnings), `npm run typecheck` (passed)
+and `npm run build` (passed). Independent final audit: PASS with no remaining
+findings. One pre-existing 15-minute-bucket concurrency test failed once during
+a parallel run; its focused and full serial reruns passed. `git diff --check`
+was clean.

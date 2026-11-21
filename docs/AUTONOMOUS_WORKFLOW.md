@@ -19,7 +19,9 @@ the resulting Pull Request and runs the command again for the next objective.
   `https://github.com/IngJabc/pasteleria-gabi.git`; GitHub reports `fork: false`,
   owner `IngJabc`, default branch `main`. There is no separate fork remote; this
   user-owned canonical repository is both the verified push target for feature
-  branches and the PR base. PR #9 (OQ-12) is merged into `main`.
+  branches and the PR base. PR #9 (OQ-12) and PR #10 (this workflow) are merged
+  into `main`; the current merge commit is
+  `ca4357163c954afeea1e0fe288232f3936d7f4db`.
 
 ## Files created
 

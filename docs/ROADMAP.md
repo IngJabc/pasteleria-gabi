@@ -115,6 +115,7 @@ backend is implemented additively in
 validated on a disposable local PostgreSQL cluster — validation details are in
 the final implementation report). No payment/receipt UI is included; migrations
 001–005 are untouched. **Not applied remotely, deployed, committed or pushed.**
+OQ-4/OQ-5 are implemented additively in migration 007 (Phase 5b below).
 
 **Supported methods: exactly** `pago_movil` → VES, `cash_usd` → USD,
 `binance_pay` → USDT and `binance_transfer` → USDT (the two Binance modalities
@@ -125,8 +126,9 @@ rejected/refunded amounts and payment counts; raw amounts are **never** summed
 across currencies. There is no authoritative conversion, cross-currency
 "fully paid" decision or auto-fulfillment. Payment amounts are declared
 component values that administrators verify — this is a documented gap, not a
-business rule. OQ-4, OQ-5 and the Binance receipt/identifier discovery remain
-OPEN.
+business rule. OQ-4 and OQ-5 are now implemented additively in migration 007
+(see the dedicated section below); the Binance receipt/identifier discovery
+remains OPEN.
 
 - **Implemented in migration 006 (backend only):** Pago Móvil (VES) with
   server-validated receipt upload to the **private** `payment-receipts` bucket
@@ -150,9 +152,9 @@ OPEN.
   creates no receipt submission, requires no receipt and never increments
   `orders.receipt_attempts`.
 - USD pricing snapshots per order: prices, subtotal, delivery, total, applied
-  BCV rate, rate timestamp, VES total and rounding rule (SPEC §4) — snapshot
-  columns remain from M3; the rate write path (OQ-4) and rounding rule (OQ-5)
-  are still OPEN and are not defined by migration 006.
+  BCV rate, rate timestamp, VES total and rounding rule (SPEC §4) — the snapshot
+  columns originate in M3 and migration 006 leaves them NULL; **migration 007
+  now fills them** (see the OQ-4/OQ-5 section below).
 - **Implemented in migration 006:** both Binance modalities — Binance Pay and
   user-to-user transfers — each in USDT. The specific Binance identifier and
   receipt data remain an open discovery item (SPEC §19). Only two digital
@@ -188,6 +190,55 @@ apply). The admin panel/history UI remains to do. OQ-7 and OQ-11 stay OPEN.
 - Sales history, operation history and administrative audit trail (UI still to
   do).
 
+## Phase 5b — BCV rates and monetary rounding (OQ-4 / OQ-5) ✅ (backend)
+
+**Progress:** implemented additively in `supabase/migrations/007_bcv_rates_and_rounding.sql`
+(local-only; no UI, no remote apply, no deployment). Migration 006 is the
+applied baseline; 007 is the next migration and rewrites nothing earlier.
+
+- **Backend implemented in migration 007 (no UI):** manual BCV rate
+  administration through service-role RPCs (`register_bcv_rate`,
+  `deactivate_bcv_rate`) fed by server actions. Rates are append-only history
+  with `is_active`; a correction deactivates the old row and inserts a new one
+  referencing it via `supersedes_id`. Registration validates a positive rate
+  (≤ 4 decimals), a non-empty source, an active session-derived administrator,
+  and an idempotency key; all mutations write `audit_log` rows and use
+  `private.require_active_admin` — clients never send an admin id.
+- **Backend implemented in migration 007:** rate reads (`get_bcv_rate`,
+  `get_last_ves_per_usd`) return the latest **active** rate at or before a point
+  in time with its source, timestamp, `age_seconds` and `is_stale`. If no active
+  rate exists, snapshotting **fails explicitly** — no unknown or invented rate,
+  no last-known fallback that pretends to be current.
+- **Backend implemented in migration 007:** per-order snapshot
+  (`apply_bcv_rate_for_tracking` for the guest via the hashed tracking token,
+  `apply_bcv_rate_to_order` for an administrator). These remain service-role-only
+  manual/legacy tools for orders that predate 007; the exact rate and its own
+  `observed_at` are stored on the order and an existing snapshot is never
+  overwritten, so later corrections cannot rewrite history.
+- **Canonical atomic checkout (focused integration audit):** `create_online_order_with_bcv`
+  invokes the unchanged `create_online_order` and resolves/writes the BCV snapshot
+  in the **same PostgreSQL transaction**. No client-supplied rate or timestamp is
+  accepted. With no active rate the order is still created with all four BCV
+  fields NULL (USD-only flow); a snapshot failure rolls back the order and its
+  reservations. The legacy wrappers are never used by this path.
+- **Pago Móvil enforcement (database trigger):** a VES payment cannot be registered
+  unless the order has a complete BCV snapshot (`bcv_rate_ves`, `bcv_rate_at`,
+  `total_ves`, `rounding_rule = 'round_half_up'`). Covers guest, admin, direct-RPC
+  and POS entry points; USD/USDT flows are unaffected. A table-level immutability
+  trigger also blocks even privileged direct updates to an existing snapshot.
+- **OQ-5 rounding:** `round_half_up` (half away from zero) applied **once** to
+  the final VES total; recorded on each snapped order via
+  `orders.rounding_rule`. No intermediate per-item rounding; declared payment
+  amounts keep at most 2 decimals; the BCV rate keeps 4. No cross-currency sum,
+  cross-currency "fully paid" state or automatic fulfillment is introduced.
+- Automatic BCV API ingestion / worker is **not** implemented or assumed; it is
+  a separate future path that can reuse `register_bcv_rate` with a machine
+  `source`. No network call, credential, cron or secret was added.
+- Validated locally (disposable local PostgreSQL 001–007, static contract and
+  server-action suites); not applied remotely or deployed.
+- The stale-rate maximum age remains an **unresolved business decision**:
+  `is_stale` is informational only, no threshold is invented or enforced.
+
 ## Phase 6 — Realtime, communication and settings ⬜
 
 - Supabase Realtime notifications for both administrators (new order, new
@@ -208,7 +259,9 @@ apply). The admin panel/history UI remains to do. OQ-7 and OQ-11 stay OPEN.
 - Store settings: business address for pickup, attention/preparation hours
   (informative, orders accepted 24/7).
 - Automated BCV rate lookup with stored history and last-known-rate fallback,
-  reporting its age when the service is unavailable.
+  reporting its age when the service is unavailable. **Manual rate registration,
+  history and age reporting are now implemented in migration 007 (Phase 5b);
+  the automatic provider lookup / worker remains a separate future item.**
 
 ## Later / not scheduled
 
@@ -226,14 +279,15 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - Final catalog, prices and photographs.
 - Real Pago Móvil data; Binance identifier and modality.
 - Pickup address, WhatsApp number, concrete schedules.
-- How the BCV rate is queried and stored.
+- How the BCV rate is queried and stored (manual administration implemented in
+  migration 007; the automatic provider lookup remains a future item).
 - Exact geographic limits of the "north zone" delivery classification.
 - Operating policy for cash-on-delivery and combined payments.
 - Commercial policy for orders requiring a delivery quote (reservation timing
   after fee acceptance is resolved in SPEC §6/§8 and DECISIONS #26; the
   commercial terms themselves remain open).
-- Still open after migration 006: OQ-7 (refund method value domain), OQ-11 (POS
-  customer identity), OQ-12 (guest receipt re-view), OQ-4 (BCV rate write path)
-  and OQ-5 (rounding rule), in addition to the Binance identifier/modality and
-  cash-on-delivery items above. None is resolved by the payments module; no
-  conversion or cross-currency "fully paid" rule was invented.
+- Still open after the payments module: OQ-7 (refund method value domain), OQ-11
+  (POS customer identity), OQ-12 (guest receipt re-view), plus the Binance
+  identifier/modality and cash-on-delivery items above. No conversion or
+  cross-currency "fully paid" rule was invented. OQ-4 (BCV rate write path) and
+  OQ-5 (rounding rule) were resolved by migration 007 (Phase 5b).

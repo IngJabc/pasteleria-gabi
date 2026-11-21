@@ -14,8 +14,11 @@ remotely). Decisions #27–#32 record the Payments Module backend added in
 `supabase/migrations/006_payments_and_verification.sql` (local-only; behaviorally
 validated on a disposable local PostgreSQL cluster — details in the final
 implementation report; not applied remotely, deployed, committed or pushed).
-Historical docs call this scope "Phase 4", tasking calls it "Phase 5". The
-no-worker scope of #1 is amended **only for OQ-16** as recorded below.
+Historical docs call this scope "Phase 4", tasking calls it "Phase 5". Decisions
+#33–#34 resolve OQ-4/OQ-5 and are implemented additively in
+`supabase/migrations/007_bcv_rates_and_rounding.sql` (local-only; validated
+locally; not applied remotely, deployed, committed or pushed). The no-worker
+scope of #1 is amended **only for OQ-16** as recorded below.
 
 ---
 
@@ -289,13 +292,14 @@ rows linger until cleanup runs — harmless because they are excluded by query.
 **Context:** SPEC §4 requires each order to keep a historical photo of prices,
 totals, applied rate, rate time, VES total and rounding rule.
 
-**Decision:** Rate/total columns are copied onto `orders` at creation;
-`exchange_rates` stores fetched rates for lookup/fallback but is deliberately
-**not** referenced by FK from orders.
+**Decision:** Rate/total columns live inline on `orders`; `exchange_rates` stores
+rates for lookup/fallback but is deliberately **not** referenced by FK from
+orders. Migration 003 leaves those columns NULL at checkout; migration 007
+(#33/#34) fills them from the exact active rate, using the rate's own timestamp.
 
 **Consequences:** Order history survives any edit/pruning of rate rows (true
 snapshot semantics); queries need no join. Trade-off: rate rows and orders can
-diverge — irrelevant, since the snapshot is authoritative.
+diverge — irrelevant, since the snapshot is authoritative and never overwritten.
 
 ## 20. Storage: public product images, service-role-only receipt uploads — status: accepted
 
@@ -540,9 +544,10 @@ assumed. Adds no cross-currency meaning to USDT (see #29).
 
 ## 29. Declared amounts only; no invented conversion — status: accepted
 
-**Context:** SPEC §4 requires an inline BCV snapshot, but OQ-4 (rate write path)
-and OQ-5 (rounding rule) are still open; payment components may be in VES, USD
-or USDT.
+**Context:** SPEC §4 requires an inline BCV snapshot; when this decision was
+made OQ-4 (rate write path) and OQ-5 (rounding rule) were still open, and payment
+components may be in VES, USD or USDT. OQ-4/OQ-5 are now resolved by #33/#34
+without changing this decision.
 
 **Decision:** `get_order_payment_summary` reports approved/pending/in_review/
 rejected/refunded amounts and payment counts **per currency**. Raw amounts are
@@ -551,8 +556,10 @@ decision or auto-fulfillment is implemented. Amounts are declared component
 values that administrators verify.
 
 **Consequences:** This is a documented gap, not a business rule. Order status
-stays in its own domain flow (SPEC §10, #23). OQ-4, OQ-5 and Binance-receipt
-discovery remain OPEN; filling them would require a new decision and migration.
+stays in its own domain flow (SPEC §10, #23). OQ-4 and OQ-5 were resolved by
+#33/#34 (migration 007) for the **informational VES snapshot only** — no
+conversion or cross-currency "fully paid" rule was introduced. Binance-receipt
+discovery remains OPEN.
 
 ## 30. One pending evidence submission per order and per payment — status: accepted
 
@@ -606,5 +613,69 @@ advance `orders.status`, write movements, consume/release reservations or change
 deterministic lock order and advisory locks serialise these paths. Verification
 remains separate from fulfillment, with only the unchanged M3/M5 RPCs owning
 second-rejection cancellation. OQ-7 (refund method domain — stored as non-empty
-free text) and OQ-11 (POS customer identity) remain OPEN, as do OQ-12, OQ-4 and
-OQ-5.
+free text) and OQ-11 (POS customer identity) remain OPEN, as does OQ-12. OQ-4 and
+OQ-5 were resolved later by #33/#34 (migration 007).
+
+## 33. Manual BCV rate administration, append-only history and exact snapshots — status: accepted (resolves OQ-4)
+
+**Context:** SPEC §4 requires each order to keep the applied BCV rate and its
+timestamp; migration 003 created `exchange_rates` and the order snapshot columns
+but no write path. OQ-4 was open. No automatic provider API, credential or worker
+is authorised by the approved scope.
+
+**Decision:** Rates are registered **manually** by an active administrator via
+`register_bcv_rate` / `deactivate_bcv_rate` (service-role RPCs behind server
+actions that derive the admin id from the verified session and recheck with
+`private.require_active_admin`). `exchange_rates` is append-only: a correction
+sets `is_active = false` on the old row and inserts a new row pointing to it via
+`supersedes_id`; `idempotency_key` is unique. The authoritative rate is the
+latest **active** row at or before the relevant instant; `get_bcv_rate` reports
+its source, `observed_at`, `age_seconds` and `is_stale`. When no active rate
+exists, snapshotting **fails explicitly** — no last-known rate is silently
+substituted, no unknown rate is invented, and the order simply keeps its USD
+total. Each order snapshot (`apply_bcv_rate_for_tracking` for a guest with only
+the hashed tracking token, `apply_bcv_rate_to_order` for an admin) locks the
+order row, stores the exact rate and `bcv_rate_at = rate.observed_at` (the rate's
+own time), and **never overwrites** an existing snapshot. Rate reads remain
+public/least-privilege; all mutating RPCs are `service_role`-only,
+`SECURITY INVOKER` with `search_path = ''`, and audited (guest applies are not
+administrative actions and write no audit row).
+
+**Consequences:** Rate corrections cannot rewrite sold orders or silently change
+their VES snapshot. Automatic provider ingestion is a separate future path that
+can reuse `register_bcv_rate` with a machine `source` without a schema change.
+No network call, secret, cron or worker was added. Implemented additively in
+migration 007 (local only).
+
+**Integration follow-up (same migration 007):** the canonical checkout path is
+`create_online_order_with_bcv`, which invokes the unchanged `create_online_order`
+and resolves/writes the snapshot in the same transaction (no client rate or
+timestamp). With no active rate it creates a USD-only order with all BCV fields
+NULL; a snapshot failure rolls back the order and reservations. The two wrappers
+remain service-role-only manual/legacy tools and are no-op replays on an existing
+snapshot; a table-level `BEFORE UPDATE` trigger blocks even privileged direct
+rewrites. A `BEFORE INSERT` trigger on `payments` rejects `pago_movil`/VES rows
+without a complete snapshot on every entry point (guest, admin, direct RPC, POS);
+USD/USDT are unaffected. **The maximum acceptable rate age is an unresolved
+business decision:** `is_stale` is informational only, and no threshold is
+invented or enforced.
+
+## 34. Round half-up once on the final VES total — status: accepted (resolves OQ-5)
+
+**Context:** SPEC §4 requires a rounding-rule snapshot but never defined the
+rule; OQ-5 was open. Payment components remain declared, administrator-verified
+amounts in VES/USD/USDT (see #29).
+
+**Decision:** The only rule is `round_half_up` (half away from zero), implemented
+as PostgreSQL `round(numeric, 2)` applied **once** to `total_usd * rate` for the
+informational `orders.total_ves`. It is recorded per order in
+`orders.rounding_rule`, constrained to `'round_half_up'`. No per-item or
+per-line rounding; declared payment components keep at most 2 decimals and the
+BCV rate keeps 4. No cross-currency sum, conversion, "fully paid" decision or
+automatic fulfillment is derived from the VES snapshot.
+
+**Consequences:** A boundary such as 10.25 × 36.5 = 374.125 becomes 374.13 (not
+374.12 as banker's rounding would give); two identical items are priced from
+the single final total, never by doubling a rounded line. Existing money
+precision is unchanged (USD 10,2 / VES 14,2 / rate 12,4). Implemented additively
+in migration 007 (local only).

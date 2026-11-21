@@ -604,6 +604,10 @@ phases.
   `customer_phone`, `fulfillment_type`, `tracking_token_hash` are all not null.
 - `orders_pos_check`: `channel = 'pos'` ⇒ `fulfillment_type IS NULL`
   (a walk-in sale has no fulfillment step).
+- **POS customer identity (OQ-11, DECISIONS #36):** in-person POS sales paid at
+  the time of sale are anonymous; no customer name, phone or email is collected
+  or required. Only `orders_online_check` mandates name/phone; `orders` has no
+  customer-email column. No schema change was needed.
 - `orders_pickup_check`: `fulfillment_type = 'pickup'` ⇒
   `delivery_zone_id IS NULL AND delivery_fee_usd IS NULL`.
 - `orders_delivery_check`: `fulfillment_type = 'delivery'` ⇒
@@ -692,6 +696,9 @@ state change. **Implemented in migration 006** (local only, additive; no UI).
   require a reference and a receipt path; cash requires neither and is the only
   method that may carry `amount_tendered_usd`. The Binance identifier/receipt
   format remains an open discovery item (SPEC §19).
+- **Distinct method domains:** `payments.method` is the constrained *payment*
+  method (exactly the four values above). `payment_refunds.method` is the
+  *refund* method described in §8.2 and is non-empty free text.
 - **Indexes:** `payments_order_id_idx`, FK indexes for `registered_by` /
   `verified_by`, partial
   `payments_review_queue_idx (created_at DESC) WHERE status IN ('pending','in_review')`,
@@ -720,7 +727,7 @@ payment is never edited beyond its lifecycle `status`.
 | `payment_id` | bigint | no | FK `payments` on delete cascade |
 | `amount` | numeric(14,2) | no | `CHECK (amount > 0)` |
 | `currency` | text | no | `CHECK (currency IN ('USD','VES','USDT'))` — mirrors the original payment (server-enforced) |
-| `method` | text | no | how the money was returned — **values undefined by SPEC §12**, see OQ-7 (no CHECK yet, on purpose) |
+| `method` | text | no | how the money was returned — **OQ-7 resolved by migration 006**: SPEC §12 requires the field but not its value domain; `payment_refunds_method_check` only requires `length(trim(method)) > 0`, with no invented value list. Distinct from constrained `payments.method` |
 | `reason` | text | no | required (SPEC §12) |
 | `admin_id` | uuid | no | FK `administrators` — responsible admin (SPEC §12) |
 | `idempotency_key` | text | yes | UNIQUE — added by migration 006; repeated refund submissions collapse to one row |
@@ -729,8 +736,9 @@ payment is never edited beyond its lifecycle `status`.
 - **Invariant (server-enforced):** Σ refunds per payment ≤ payment amount;
   crossing 100 % flips `payments.status` to `refunded_full`, otherwise
   `refunded_partial`. `currency` is copied from the original payment by the
-  server; `method` is non-empty free text because OQ-7 (refund method domain)
-  remains OPEN — no value list is invented.
+  server; `method` is non-empty free text — OQ-7 was resolved in migration 006
+  (SPEC §12 requires the field, not its value domain) — and no value list is
+  invented.
 - **Indexes:** `payment_refunds_payment_id_idx`, `payment_refunds_admin_id_idx`.
 - **Status (migration 006, local only):** append-only rows written by the
   `record_refund` service-role RPC (advisory lock + UNIQUE idempotency key,
@@ -867,8 +875,8 @@ No table duplicates another table's state. Everything derived is computed:
 | `submit_payment_evidence(p_payment_id)` | function | service role only | migration 006: links the evidence to the one pending `receipt_submissions` row via `payment_id` and moves the payment to `in_review`; calls the unchanged `hold_order_reservations` so the attempt counter, held state, SLA row and two-receipt cap stay in one implementation; rejects cash payments |
 | `approve_payment(p_payment_id, p_admin_id)` | function | service role only | migration 006: sets `approved` with verified_by/at, closes the linked SLA submission through the existing `approve_receipt_submission`, audits `payment.verify`; no order/inventory write of its own |
 | `reject_payment(p_payment_id, p_admin_id)` | function | service role only | migration 006: sets `rejected` with verified_by/at and delegates any correction window / second-rejection cancellation to the unchanged `open_order_correction_window`; never increments `receipt_attempts` itself |
-| `register_pos_cash_sale(p_items, p_amount_tendered_usd, p_idempotency_key, p_admin_id)` | function | service role only | migration 006: one POS order (`channel = 'pos'`), server-recomputed prices, FIFO allocation and immediate consumption via `consume_order_reservations`, one approved `cash_usd` component, deterministic lock order + advisory lock + UNIQUE idempotency key; no duplicate inventory deduction |
-| `record_refund(p_payment_id, p_amount, p_method, p_reason, p_admin_id, p_idempotency_key)` | function | service role only | migration 006: append-only `payment_refunds` row (currency copied from the payment, non-empty free-text method — OQ-7 open), over-refund blocked, `refunded_partial`/`refunded_full` status and `refund.create` audit; advisory lock + UNIQUE idempotency key |
+| `register_pos_cash_sale(p_items, p_amount_tendered_usd, p_idempotency_key, p_admin_id)` | function | service role only | migration 006: one POS order (`channel = 'pos'`), server-recomputed prices, FIFO allocation and immediate consumption via `consume_order_reservations`, one approved `cash_usd` component, no customer identity input (OQ-11/#36), deterministic lock order + advisory lock + UNIQUE idempotency key; no duplicate inventory deduction |
+| `record_refund(p_payment_id, p_amount, p_method, p_reason, p_admin_id, p_idempotency_key)` | function | service role only | migration 006: append-only `payment_refunds` row (currency copied from the payment, non-empty free-text method — OQ-7 resolved by migration 006), over-refund blocked, `refunded_partial`/`refunded_full` status and `refund.create` audit; advisory lock + UNIQUE idempotency key |
 | `get_order_payment_summary(p_order_id)` | function (read model) | authenticated admins and service role; anon revoked | migration 006 per-currency read model: approved/pending/in_review/rejected/refunded amounts and payment counts; no cross-currency arithmetic. This RPC implements the earlier `order_payment_summary` view sketch (no view is created) |
 
 **Implemented mechanism (decision #26 — Phase 4 / migration 004, local only):**
@@ -921,6 +929,11 @@ only):**
   client INSERT/UPDATE/DELETE policies. The server action validates MIME type,
   size, token-derived ownership, order state and submission eligibility before
   uploading with the service role, and removes the object if the RPC fails.
+  Guest re-view is implemented (OQ-12/#37-#38) as a server-only signed-URL read.
+  The service-role action resolves the order from the tracking token, reads only
+  that order's receipt-bearing payment rows and mints 300-second signed URLs for
+  every submitted receipt. No bucket policy, column, grant or client read path
+  was added.
 - Payment verification is separate from order fulfillment: the approve/reject
   RPCs do not advance `orders.status`, write inventory movements, consume or
   release reservations, or change `receipt_attempts`. The unchanged M3/M5 RPCs
@@ -996,25 +1009,28 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-4 | How the BCV rate is queried/stored, and whether **USD-only orders** also snapshot the rate (SPEC §4, §19) | **Resolved (Phase 5b / migration 007):** manual admin registration, append-only active history, latest-active lookup with age, explicit failure when none exists, exact per-order snapshot (including USD-only orders when requested); no automatic provider ingestion (future item) |
 | OQ-5 | The actual rounding rule to record in `rounding_rule` (SPEC §4 requires the snapshot, never defines the rule) | **Resolved (Phase 5b / migration 007):** `round_half_up` (half away from zero) applied once to the final VES total, recorded on each snapped order; no per-item rounding |
 | OQ-6 | Shape of Pago Móvil receiver data (SPEC §19) | `store_settings.payment_instructions` structure (Phase 4) |
-| OQ-7 | Allowed refund methods (SPEC §12 requires the field, not the value list) | `payment_refunds.method` CHECK (Phase 5) |
+| OQ-7 | Allowed refund methods (SPEC §12 requires the field, not the value list) | **Resolved (Payments Module / migration 006):** `payment_refunds.method` is non-empty free text (`payment_refunds_method_check`); no value-domain CHECK or value list invented. Distinct from the constrained `payments.method` payment-method domain |
 | OQ-8 | Shape of attention/preparation schedules (SPEC §14) | **Resolved (Phase 6 / migration 009):** `business_hours` JSONB contract with `America/Caracas`, weekly `attention`/`pickup`, closed days `[]`, multiple ordered non-overlapping HH24:MI intervals; DB CHECK + Zod action; no seed values. Actual hours/address remain business data to configure |
 | OQ-9 | SPEC §8 says every movement keeps an "administrator", but automated online-sale movements have no acting admin — proposed: `admin_id` nullable with null = system | **Still open.** Migration 002 shipped the column nullable (design §6.3) but always writes an admin id; migration 003 now writes `sale` movements with `admin_id` NULL (system semantics) — confirm before admin reporting relies on the distinction |
 | OQ-10 | Should the storefront display per-product stock (SPEC §3 lists "inventario disponible" ambiguously)? | Whether `get_product_stock` output is shown publicly (design supports it either way) |
-| OQ-11 | Are walk-in (POS) sales recorded without customer identity? Proposed: yes — all customer columns nullable for `channel = 'pos'` | Phase 5 |
-| OQ-12 | May a guest re-view their own uploaded receipt from the tracking page? Proposed: yes, via a short-lived signed URL issued by server code after token validation (no storage-policy change) | Phase 4 tracking/payment UI |
+| OQ-11 | Are walk-in (POS) sales recorded without customer identity? | **Resolved (confirmed business decision / DECISIONS #36):** in-person POS sales paid at the time of sale are anonymous; no customer name, phone or email is collected or required. Migration 006's RPC and server action already accept no identity fields; nullable `customer_name`/`customer_phone` stay null for POS and `orders` has no email column. No schema change |
+| OQ-12 | May a guest re-view their own uploaded receipt from the tracking page? | **Resolved and implemented (DECISIONS #37/#38):** yes, through the existing private tracking link. The 64-hex token is validated and resolved by the service-role `get_order_for_tracking` hash lookup; the service-role action reads only that order's receipt metadata, returns **all submitted receipts** (original and correction) as **300-second signed URLs**, and allows re-view after `approved`/`rejected` payment while excluding `canceled`/`expired` orders. Private bucket and RLS unchanged; no client table/object SELECT, migration or new policy |
 | OQ-13 | Does the 20-minute initial reservation clock apply to orders that never upload a receipt (cash on delivery) or that wait for a manual delivery quote (SPEC §6/§8)? | **Resolved by the confirmed M3 rules:** quote-pending deliveries are created held (`expires_at = NULL`) and keep the inventory reserved while the quote is confirmed; cash-on-delivery orders keep the plain 20-minute initial clock. The follow-up sub-question was recorded as **OQ-17** and is now resolved by DECISIONS #26 (new 20-minute window on explicit fee acceptance) |
 | OQ-14 | Repeat rejection policy and the number of allowed receipts | **Resolved by the confirmed M3 rules:** at most two receipts total (original + one correction), the single correction window is 20 minutes and never extended by repeated rejections, and a second rejection auto-cancels the order and releases all reservations. Implemented in migration 003 (`orders.receipt_attempts`, `open_order_correction_window`) |
 | OQ-15 | Confirm the hold rule: a submitted receipt awaiting verification suspends the reservation deadline (`expires_at = NULL`) until an administrator acts | **Resolved by the confirmed M3 rules:** migration 003's `hold_order_reservations` suspends the deadline and counts the submission (idempotent on repeats); the receipt stays held throughout admin review |
 | OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved (DECISIONS #25) and implemented in Phase 6** by migration 005 + `supabase/worker/sla-worker.mjs` (validated locally, not applied remotely/deployed): each receipt submission starts its own 24-hour clock; every active administrator receives a durable in-app notification on the first worker run after the deadline, repeated every 15 minutes until that submission is approved/rejected; dedupe key `(receipt_submission_id, admin_id, interval_bucket)`. **Never** auto-cancels the order or releases inventory; no change to M3/M4 status or reservation rules |
 | OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally, not applied remotely): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
 
-**Still open after migration 007:** OQ-7 (refund method value domain — stored as
-non-empty free text, no domain invented), OQ-11 (POS customer identity), OQ-12
-(guest receipt re-view). The specific Binance identifier/receipt data and
-modality details (SPEC §19) and the cash-on-delivery/combined-payment operating
-policy are also still open. OQ-4 and OQ-5 are **resolved** by migration 007
-(manual rate history, exact snapshot and `round_half_up` on the final VES total).
-Neither migration 006 nor 007 adds a conversion rule for payment components,
+**Still open after migrations 007 and 009:** the specific Binance
+identifier/receipt data and modality details (SPEC §19) and the
+cash-on-delivery/combined-payment operating policy. OQ-11 was resolved by
+confirmed decision #36 (anonymous in-person POS sales; no schema change), OQ-12
+by #37/#38 (implemented token-only receipt re-view with all receipts, 300-second
+signed URLs and approved/rejected eligibility), OQ-7 by migration 006 (non-empty
+free-text refund method, no invented value domain), OQ-4 and OQ-5 by migration
+007 (manual rate history, exact snapshot and `round_half_up` on the final VES
+total), and OQ-8 by migration 009 (schedule JSONB contract). Neither migration 006 nor 007 adds a conversion rule
+for payment components,
 a cross-currency "fully paid" decision or auto-fulfillment; declared component
 amounts are what administrators verify.
 

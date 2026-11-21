@@ -171,7 +171,12 @@ remains OPEN.
 
 **Progress:** the POS cash-sale, external-cash-registration, verification and
 refund **backend** is implemented in migration 006 (local-only; no UI, no remote
-apply). The admin panel/history UI remains to do. OQ-7 and OQ-11 stay OPEN.
+apply). The admin panel/history UI remains to do. OQ-7 was resolved by migration
+006; OQ-11 was resolved by confirmed decision #36 (anonymous in-person POS
+sales, no customer fields and no schema change). OQ-12 was resolved by decisions
+#37/#38 and implemented with a token-only server action on the new private
+`/seguimiento/[token]` route: all submitted receipts, exact 300-second signed
+URLs, and approved/rejected payment eligibility.
 
 - Dashboard: pending orders, receipts to review, available inventory, sales and
   recent activity (UI still to do).
@@ -179,13 +184,18 @@ apply). The admin panel/history UI remains to do. OQ-7 and OQ-11 stay OPEN.
   one `orders` row with `channel = 'pos'`, server-recomputed prices, immediate
   FIFO allocation and inventory consumption via the existing
   `consume_order_reservations` RPC, one approved cash payment component and
-  idempotency by key — no duplicate inventory deduction. Admin cash
-  registration against an existing online order is also implemented.
+  idempotency by key — no duplicate inventory deduction and no customer
+  name/phone/email collected (OQ-11/#36). Admin cash registration against an
+  existing online order is also implemented.
 - **Backend implemented in migration 006 (no UI):** payment verification and
   append-only refund recording with idempotency by key, currency copied from
   the payment, over-refund blocked and payment status becoming
-  `refunded_partial`/`refunded_full`. OQ-7 (refund method value domain) remains
-  OPEN: the method is non-empty free text, no domain invented. Order state
+  `refunded_partial`/`refunded_full`. OQ-7 was resolved in migration 006: SPEC
+  §12 requires a refund-method field but not its value domain, so
+  `payment_refunds.method` is non-empty free text with no value-domain CHECK or
+  invented value list. This is distinct from `payments.method`, which is
+  constrained to `pago_movil`, `cash_usd`, `binance_pay` and `binance_transfer`.
+  Order state
   transitions stay in their own domain flow (SPEC §10–12).
 - Sales history, operation history and administrative audit trail (UI still to
   do).
@@ -305,9 +315,15 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - Commercial policy for orders requiring a delivery quote (reservation timing
   after fee acceptance is resolved in SPEC §6/§8 and DECISIONS #26; the
   commercial terms themselves remain open).
-- Still open after the payments module: OQ-7 (refund method value domain), OQ-11
-  (POS customer identity), OQ-12 (guest receipt re-view), plus the Binance
-  identifier/modality and cash-on-delivery items above. No conversion or
-  cross-currency "fully paid" rule was invented. OQ-4 (BCV rate write path) and
-  OQ-5 (rounding rule) were resolved by migration 007 (Phase 5b); OQ-8
-  (schedule structure) was resolved by migration 009 (Phase 6).
+- Still open after the payments module: the Binance identifier/modality and
+  cash-on-delivery items above. OQ-11 was resolved by confirmed decision #36:
+  in-person POS sales paid at the time of sale are anonymous, with no customer
+  name, phone or email and no schema change. OQ-12 was resolved by #37/#38 and
+  implemented on the private `/seguimiento/[token]` route: all receipts, exact
+  300-second signed URLs and approved/rejected payment eligibility. OQ-7 was
+  resolved by migration 006: SPEC §12 requires a refund-method field, not a
+  value domain, so `payment_refunds.method` is non-empty free text with no
+  invented value-domain CHECK; `payments.method` remains separately constrained.
+  No conversion or cross-currency "fully paid" rule was invented. OQ-4 (BCV rate
+  write path) and OQ-5 (rounding rule) were resolved by migration 007 (Phase 5b);
+  OQ-8 (schedule structure) was resolved by migration 009 (Phase 6).

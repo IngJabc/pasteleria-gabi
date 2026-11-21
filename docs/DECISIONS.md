@@ -17,8 +17,13 @@ implementation report; not applied remotely, deployed, committed or pushed).
 Historical docs call this scope "Phase 4", tasking calls it "Phase 5". Decisions
 #33–#34 resolve OQ-4/OQ-5 and are implemented additively in
 `supabase/migrations/007_bcv_rates_and_rounding.sql` (local-only; validated
-locally; not applied remotely, deployed, committed or pushed). The no-worker
-scope of #1 is amended **only for OQ-16** as recorded below.
+locally; not applied remotely, deployed, committed or pushed). #35 resolves OQ-8
+with `supabase/migrations/009_store_settings_schedule.sql`. #36 records the
+confirmed OQ-11 rule that in-person POS sales paid at the time of sale are
+anonymous; it required no schema change. #37 approves the OQ-12 capability for
+guest receipt re-view through the private tracking link, and #38 confirms the
+approved values and implementation that close OQ-12. The no-worker scope of #1 is amended
+**only for OQ-16** as recorded below.
 
 ---
 
@@ -613,9 +618,17 @@ advance `orders.status`, write movements, consume/release reservations or change
 **Consequences:** No duplicate inventory deduction or double refund; row locks,
 deterministic lock order and advisory locks serialise these paths. Verification
 remains separate from fulfillment, with only the unchanged M3/M5 RPCs owning
-second-rejection cancellation. OQ-7 (refund method domain — stored as non-empty
-free text) and OQ-11 (POS customer identity) remain OPEN, as does OQ-12. OQ-4 and
-OQ-5 were resolved later by #33/#34 (migration 007).
+second-rejection cancellation. OQ-7 is **resolved by migration 006 itself**:
+SPEC §12 requires a refund-method field but not its value domain, so
+`payment_refunds.method` is `text` guarded only by
+`payment_refunds_method_check` (`length(trim(method)) > 0`); no value-domain
+CHECK or value list is invented. This is a different domain from
+`payments.method`, whose CHECK allows exactly `pago_movil`, `cash_usd`,
+`binance_pay` and `binance_transfer`. OQ-11 is resolved by the confirmed
+business decision in #36 (anonymous in-person POS sales, no customer fields);
+OQ-12 is resolved by #37/#38 (token-only re-view of all receipts, 300-second
+signed URLs and approved/rejected eligibility). OQ-4 and OQ-5 were resolved
+later by #33/#34 (migration 007).
 
 ## 33. Manual BCV rate administration, append-only history and exact snapshots — status: accepted (resolves OQ-4)
 
@@ -728,3 +741,98 @@ unchanged (`anon` keeps public SELECT with no write policy; admins keep ALL).
 The JSONB shape is strict, so future fields require an explicit additive
 migration; this is preferable to silently accepting malformed schedules.
 Implemented locally in migration 009; not applied remotely.
+
+## 36. Anonymous in-person POS sales — status: accepted (resolves OQ-11)
+
+**Context:** SPEC §9 distinguishes walk-in sales from online orders. Migration
+006's `register_pos_cash_sale` creates one `orders` row with `channel = 'pos'`
+and inserts only channel, status and totals; its server action accepts only
+items, amount tendered and an idempotency key. OQ-11 asked whether buyer identity
+must be collected for these sales.
+
+**Decision:** In-person POS sales paid at the time of sale are anonymous. Buyer
+identity is not required: no customer name, phone or email is collected. No
+customer field or required column is added. The existing nullable
+`customer_name`/`customer_phone` columns remain null for POS rows (online rows
+still require both), and `orders` has no customer-email column. The online guest
+flow is unchanged.
+
+**Consequences:** No schema or POS-flow change is needed: the confirmed rule
+already matches migration 006 and the current server action. POS rows remain
+distinguishable by `channel = 'pos'`, carry no tracking token and have
+`fulfillment_type IS NULL`. This decision does not affect guest receipt re-view,
+which is addressed separately in #37.
+
+## 37. Guest receipt re-view through the private tracking link — status: accepted (capability approved; closes with #38)
+
+**Context:** SPEC §12 requires private receipt storage; migration 006 stores
+receipts in the private `payment-receipts` bucket with administrator SELECT only
+and service-role-only uploads. The existing guest server actions validate a
+64-hex tracking token and resolve it through the service-role
+`get_order_for_tracking` SHA-256 lookup; no order id or customer identity is
+accepted as authorization. OQ-12 asked whether a guest may re-view their own
+submitted receipt.
+
+**Decision:** Guest receipt re-view through the existing private order tracking
+link is **approved**. The tracking token remains the only credential. Re-view is
+delivered by server-created signed URLs for the private objects, using the
+service-role client after token validation. The bucket stays private, its
+current policies are unchanged, and no client table read, client storage listing
+or direct object SELECT is added. This decision does not change any existing
+security boundary.
+
+**Implementation choices (confirmed in #38):** exact signed-URL lifetime of
+**5 minutes / 300 seconds**; **all submitted receipts** for the order (original
+and correction); eligibility after any payment is `approved` or `rejected`,
+excluding `canceled`/`expired` orders and requiring at least one submitted
+receipt. No alternative lifetime, narrower scope or wider eligibility is used.
+
+**Consequences:** OQ-12 is fully closed by #38. The implementation uses one
+narrow server-side read path and one `"use server"` action that validates the
+token, resolves only the approved receipt scope, applies the approved
+eligibility window, creates the signed URLs with the approved lifetime and
+returns only the URLs. The existing admin client performs the receipt lookup, so
+this decision implies no migration, schema column, storage policy or RLS change.
+Any future service-role-only read RPC must not grant `anon`/`authenticated`
+EXECUTE.
+
+## 38. OQ-12 implementation values and closure — status: accepted (resolves OQ-12)
+
+**Context:** #37 approved the capability but deliberately deferred three
+business choices. The user subsequently confirmed all three values; no default
+or inferred value is used.
+
+**Decision:** The approved implementation values are:
+
+- **Signed-URL lifetime:** exactly **5 minutes / 300 seconds** on every URL.
+- **Receipt scope:** **all receipts submitted for the order**, including the
+  original and any correction. The server returns one URL per receipt-bearing
+  payment row, ordered by creation time.
+- **Eligibility:** re-view is available once a payment for the order is
+  `approved` or `rejected`; `canceled` and `expired` orders are excluded, and at
+  least one submitted receipt is required. Any non-canceled/non-expired order
+  status is otherwise allowed. The tracking token remains the only credential;
+  no order id, customer identity, admin id, token hash or storage path is
+  accepted from the client.
+
+**Implementation:** `src/features/payments/receipt-review.ts` is a `"use server"`
+action that validates the existing 64-character lowercase-hex
+`trackingTokenSchema`, resolves the order only through the service-role
+`get_order_for_tracking` RPC and reads only receipt metadata for that resolved
+order through `createSupabaseAdminClient()`. It returns
+`{ ok: true, urls: string[] }` or one generic Spanish error. No database row,
+`receipt_path`, token, hash or PII is returned. Signed URLs are minted with
+`createSignedUrl(path, 300)`. `src/features/payments/receipt-review-control.tsx`
+hosts an explicit native button, a single polite live region for loading and
+errors, and a semantic list with disambiguated links. The private route
+`src/app/(storefront)/seguimiento/[token]/page.tsx` hosts the control and is not
+indexed.
+
+**Consequences:** OQ-12 is **closed**. `payment-receipts` remains private with
+administrator SELECT only; no storage policy, RLS grant, migration, client
+storage listing or client table read was added. Upload, correction, approval,
+rejection, SLA, reservation and two-attempt behavior are unchanged. Validation
+covers invalid tokens, canceled/expired and eligible statuses, approval and
+rejection, all receipts including an unreviewed correction, exact 300-second
+lifetime, generic errors, cross-order isolation, ignored client-supplied
+identifiers and absence of sensitive data. No remote project was contacted.

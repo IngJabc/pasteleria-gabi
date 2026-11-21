@@ -363,7 +363,10 @@ describe.skipIf(!tools)("OQ-16 receipt-review SLA migration on a disposable loca
       new Set([first.bucket, second.bucket, delayed.bucket].sort((a, b) => a - b)),
     );
     expect(second.bucket).toBe(first.bucket + 1);
-    expect(delayed.bucket).toBe(first.bucket + 3); // bucket +2 was skipped, not replayed
+    // A 46-minute jump spans 3 or 4 quarter-hour buckets depending on the
+    // current minute. Intermediate buckets are skipped, never replayed.
+    expect(delayed.bucket - first.bucket).toBeGreaterThanOrEqual(3);
+    expect(delayed.bucket - first.bucket).toBeLessThanOrEqual(4);
     expect(buckets).toHaveLength(6); // 3 buckets x 2 active admins
   });
 

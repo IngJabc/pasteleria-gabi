@@ -39,6 +39,14 @@ export const referenceSchema = z
 
 export const RECEIPT_BUCKET = "payment-receipts";
 export const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+/** OQ-12: approved signed-URL lifetime. Business-approved; never overridden. */
+export const RECEIPT_REVIEW_URL_LIFETIME_SECONDS = 300;
+export const receiptReviewUnavailableError = "No se pudieron consultar los comprobantes.";
+
+/** OQ-12 returns only signed URLs and a generic failure; never database rows. */
+export type ReceiptReviewResult =
+  | { ok: true; urls: string[] }
+  | { ok: false; error: string };
 
 export const RECEIPT_CONTENT_TYPES: Record<string, string> = {
   "image/jpeg": "jpg",

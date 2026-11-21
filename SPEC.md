@@ -138,6 +138,19 @@ efectivo no crean presentación, no requieren comprobante y nunca incrementan
 sigue vigente, por lo que solo pueden existir dos presentaciones digitales de
 evidencia por pedido.
 
+OQ-12 quedó resuelta (DECISIONS #37 y #38): el invitado puede volver a ver **todos**
+los comprobantes presentados para su pedido (el original y la corrección) desde
+el enlace privado de seguimiento. La acción `getReceiptUrlsForTracking` valida el
+token de 64 caracteres hexadecimales, resuelve el pedido únicamente mediante
+`get_order_for_tracking` con el cliente de servicio, exige al menos un
+comprobante presentado y permite la consulta cuando algún pago está `approved` o
+`rejected`, excluyendo pedidos `canceled`/`expired`. Cada URL firmada se crea en
+el servidor con una vigencia exacta de **5 minutos (300 segundos)** y la respuesta
+contiene solo las URLs. La ruta `/seguimiento/[token]` ofrece un control
+accesible con estado de carga, error genérico y una lista de enlaces. El bucket
+`payment-receipts` sigue privado, sin políticas nuevas ni acceso directo del
+cliente.
+
 ### Efectivo
 
 Se permitirá efectivo en USD para pedidos online y presenciales, independientemente del método de entrega.
@@ -287,8 +300,10 @@ precios recalculados por el servidor, asignación FIFO inmediata y consumo de
 inventario mediante el RPC existente `consume_order_reservations`, un único
 componente de pago en efectivo aprobado e idempotencia por clave. No hay doble
 descuento de inventario. El registro de pagos externos contra pedidos online
-existentes también forma parte de este backend. La identidad del cliente en POS
-(OQ-11) sigue sin resolverse.
+existentes también forma parte de este backend. Las ventas presenciales pagadas
+en el momento son anónimas (OQ-11, decisión confirmada en DECISIONS #36): no se
+recogen nombre, teléfono ni correo del comprador, y el RPC ni la acción de
+servidor aceptan campos de identidad. No se añadió esquema.
 
 ## 10. Estados de pedidos y pagos
 
@@ -356,9 +371,12 @@ Una devolución no deberá borrar ni modificar el registro histórico del pago o
 **Implementación (migración 006; backend local, sin interfaz):** `payment_refunds`
 es append-only, con idempotencia por clave y moneda copiada del pago original. El
 importe devuelto no puede superar el del pago; el estado del pago pasa a
-`refunded_partial` o `refunded_full`. OQ-7 (dominio de valores del método de
-devolución) permanece abierto: el método se registra como texto no vacío, sin
-inventar un dominio.
+`refunded_partial` o `refunded_full`. OQ-7 queda resuelta por la propia migración
+006: esta sección exige el campo de método, no su dominio de valores, por lo que
+`payment_refunds.method` se registra como texto no vacío mediante
+`payment_refunds_method_check`, sin inventar un CHECK de dominio ni una lista de
+valores. Este dominio es distinto de `payments.method`, que sí está restringido
+a los cuatro métodos de pago.
 
 ## 13. Notificaciones y comunicación
 
@@ -461,15 +479,22 @@ No se fijará una identidad definitiva hasta que el negocio apruebe una propuest
 - Definir el tratamiento operativo de pedidos con efectivo contra entrega y pagos combinados.
 - Definir la política comercial para pedidos con cotización de delivery (el plazo de reserva tras la aceptación de la tarifa ya está definido en las secciones 6 y 8; falta la política comercial en sí).
 
-Tras la migración 006 seguían abiertos: OQ-7 (métodos de devolución), OQ-11
-(identidad del cliente en POS), OQ-12 (revisión del comprobante por el invitado),
+Tras la migración 006 quedaban pendientes de confirmación OQ-11 (identidad del
+cliente en POS) y OQ-12 (revisión del comprobante por el invitado), además de
 OQ-4 y OQ-5 (tasa BCV y redondeo), el identificador y los datos de recepción de
 Binance (incluida la modalidad técnica de ambas variantes) y la política
-operativa de efectivo contra entrega y pagos combinados. La migración 007
-resuelve **OQ-4 y OQ-5** (§4: registro manual de tasas, consulta con historial y
-antigüedad, snapshot exacto por pedido y redondeo `round_half_up`); los demás
-puntos siguen abiertos. El snapshot se captura ahora de forma atómica dentro de
-la creación del pedido (`create_online_order_with_bcv`); un pago `pago_movil`
+operativa de efectivo contra entrega y pagos combinados. OQ-7 quedó resuelta en
+la propia migración 006: el método de devolución es texto no vacío y no se
+inventó un dominio de valores. OQ-11 quedó resuelta por decisión de negocio
+confirmada (DECISIONS #36): las ventas presenciales pagadas en el momento son
+anónimas, sin nombre, teléfono ni correo, y sin cambios de esquema. OQ-12 quedó
+resuelto (DECISIONS #37/#38): el invitado ve todos sus comprobantes desde el
+enlace privado, con URLs firmadas de 300 segundos y elegibilidad tras `approved`
+o `rejected`, sin cambiar el bucket privado. La migración 007 resuelve **OQ-4 y OQ-5** (§4: registro manual de tasas,
+consulta con historial y antigüedad, snapshot exacto por pedido y redondeo
+`round_half_up`); los demás puntos siguen abiertos. El snapshot se captura ahora
+de forma atómica dentro de la creación del pedido
+(`create_online_order_with_bcv`); un pago `pago_movil`
 exige un snapshot BCV completo, y la antigüedad máxima aceptable de la tasa
 sigue siendo una decisión de negocio pendiente (`is_stale` es informativo).
 

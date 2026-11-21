@@ -7,12 +7,12 @@ into each other's internals — shared behavior belongs in `src/domain`,
 `src/components` or `src/infrastructure`.
 
 Planned modules (documented in `docs/ROADMAP.md`). Backend-only server actions
-exist today in `orders/`, `payments/` and `exchange-rates/`; no feature UI exists
-yet:
+exist in `orders/`, `payments/` and `exchange-rates/`. `catalog/` renders the
+public product list and detail UI; other feature UI remains planned:
 
 | Folder | Capability |
 | --- | --- |
-| `catalog/` | Product listing, product detail, admin product management. |
+| `catalog/` | **Public UI implemented:** active product list/detail with `product-images` URLs and Zod-validated server reads; admin product management remains planned. |
 | `cart/` | Client-side cart state for the storefront. |
 | `checkout/` | Guest checkout: customer data, delivery/pickup, server-side recalculation. |
 | `orders/` | **Partial:** quote acceptance by private tracking token (OQ-17); full online-order/tracking UI still planned (SPEC §7). |

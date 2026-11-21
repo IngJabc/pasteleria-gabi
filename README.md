@@ -27,16 +27,18 @@ active administrator every 15 minutes until that receipt is approved/rejected
 quote **is implemented in Phase 4**: a private-token, service-role RPC writes
 one fixed 20-minute window in `quote_acceptance_expires_at` and copies it to
 `expires_at`, leaving the historical `initial_expires_at` immutable. Migrations
-004 and 005 have not been applied remotely and the worker is not deployed. No
-business features are running; the pages are still placeholders.
+004 and 005 have not been applied remotely and the worker is not deployed.
+The public catalog reads active products at request time from the existing
+Supabase tables and renders `/` and `/productos/[slug]`. Other business flows
+remain backend work or placeholders.
 The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
 
 - Next.js 16 (App Router) + React 19 + TypeScript (strict mode)
 - Tailwind CSS 4
-- Supabase: PostgreSQL, Auth, Storage, Realtime via `@supabase/ssr` (project not
-  provisioned yet)
+- Supabase: PostgreSQL, Auth, Storage, Realtime via `@supabase/ssr` (project
+  provisioned; M1 applied)
 - Zod (validation), Vitest (tests), ESLint (flat config)
 - Deployed on Vercel
 
@@ -64,8 +66,7 @@ Configure environment variables:
 cp .env.example .env.local
 ```
 
-Then fill `.env.local` with the values from the Supabase dashboard (the project
-is created in a later phase — see [`docs/ROADMAP.md`](./docs/ROADMAP.md)).
+Then fill `.env.local` with the values from the Supabase dashboard.
 **Never commit real credentials**; `.env.local` is git-ignored and only
 [`.env.example`](./.env.example) (placeholders, no secrets) is tracked.
 
@@ -104,7 +105,7 @@ pasteleria-online/
 ├── docs/                  # ROADMAP, ARCHITECTURE, DECISIONS
 ├── src/
 │   ├── app/               # Routes only (App Router)
-│   │   ├── (storefront)/  #   customer-facing routes: /
+│   │   ├── (storefront)/  #   customer routes: / and /productos/[slug]
 │   │   └── (admin)/admin/ #   private admin routes: /admin (no data yet)
 │   ├── components/        # Shared presentational components (no logic)
 │   ├── features/          # One folder per capability (catalog, checkout, …)
@@ -130,8 +131,9 @@ Each folder inside `src/` contains a README with its rules and planned contents.
    only ever be set server-side.
 3. Deploy the production branch.
 
-Note: the Supabase project does not exist yet, so a deployment in Phase 0 will
-build and render placeholder pages only — no database calls are made.
+Note: the public catalog reads active products from Supabase at request time.
+Set a valid `NEXT_PUBLIC_SUPABASE_URL` at build time so `next/image` accepts
+Supabase Storage URLs. Other business flows remain backend or placeholder work.
 
 ## Documentation
 

@@ -354,8 +354,10 @@ unauthorized modifications.
   table is writable through the link. `submit_payment_evidence` links the
   server-uploaded receipt to the single pending submission, calling the
   unchanged `hold_order_reservations` for the attempt counter and two-receipt
-  cap. Cash payments create no submission. Whether a guest may re-view their
-  own receipt remains open (OQ-12).
+  cap. Cash payments create no submission. Guest receipt re-view is implemented
+  (OQ-12/#37-#38) through this same token-validation boundary: the signed URLs
+  are created server-side only, cover all submitted receipts and last exactly
+  300 seconds.
 - Brute force is infeasible (high-entropy token, unique-indexed digest); no
   rate limiting dependency is added for the MVP.
 
@@ -403,10 +405,47 @@ fails**. `next.config.ts` raises the Server Action request body limit to `6mb`
 rejected before validation. Admin panel uploads (product photos) use the session
 client under the admin policies above.
 
-**Receipt visibility:** administrators can read every receipt (verification
-needs it). Whether the *guest* can re-view their own receipt from the tracking
-page is left open — it would be served as a short-lived signed URL by server
-code after token validation (no storage policy change). See OQ-12 in TASKS.
+**Receipt visibility (OQ-12, resolved and implemented):** administrators can
+read every receipt (verification needs it). Guests can re-view **all** receipts
+submitted for their own order (original and correction) through the existing
+private tracking link (DECISIONS #37/#38). `getReceiptUrlsForTracking` is a
+`"use server"` action that validates the 64-hex token, calls the service-role
+`get_order_for_tracking` hash lookup, reads only receipt-bearing payment rows
+for the resolved order through `createSupabaseAdminClient()`, requires at least
+one submitted receipt, and mints one signed URL per receipt with an exact
+**300-second** lifetime. It allows re-view once a payment is `approved` or
+`rejected` and excludes `canceled`/`expired` orders. Every failure path returns
+the same generic Spanish message. The response contains only `urls`, never a
+database row, `receipt_path`, token, hash or PII. No `anon`/`authenticated`
+SELECT policy is added, no `payments` table is exposed through PostgREST, and no
+client storage listing or direct object read is granted.
+
+The private route `src/app/(storefront)/seguimiento/[token]/page.tsx` validates
+the URL token shape and renders `ReceiptReviewControl`. That client component
+uses a native button, keeps a single polite live region for loading and error
+announcements, and renders a semantic list of numbered links only after the
+server action succeeds. Signed URLs are regenerated on each explicit request, so
+a retry does not reuse an expired URL. The bucket, RLS policies, grants and all
+upload/verification/SLA/RPC flows are unchanged; no migration was needed.
+
+**Acceptance criteria (implemented):**
+
+- A valid token for an eligible order returns every submitted receipt as a
+  300-second signed URL; invalid, canceled/expired, unreviewed or receipt-less
+  requests return the same generic error with no path or PII.
+- No order id, customer identity, admin id, token hash or storage path is
+  accepted from the client; extra client fields are ignored and a token reaches
+  only its own order's receipts.
+- Eligibility is exactly `approved`/`rejected` payment with at least one
+  submitted receipt and a non-canceled/non-expired order; no earlier, broader or
+  narrower state window mints a URL.
+- `payment-receipts` remains private with administrator SELECT only; no new
+  `anon`/`authenticated` storage policy, client write policy, direct object read
+  or RPC EXECUTE grant is added.
+- The action response and logs contain no token, token hash, `receipt_path` or
+  customer PII.
+- Existing upload, verification, SLA, reservation and two-receipt-cap behavior
+  is unchanged.
 
 ## 8. Server-side validation invariants (application ↔ database)
 
@@ -434,8 +473,9 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 | Payment verification is not fulfillment | The migration 006 approve/reject RPCs do not advance `orders.status`, write inventory movements, consume/release reservations or change `receipt_attempts`. The unchanged M3/M5 RPCs are the only implementation of the two-receipt cap, single 20-minute correction window and second-rejection cancellation; migration 006 delegates to them |
 | Evidence linkage and single pending submission | `receipt_submissions.payment_id` links the OQ-16 review/SLA history to ONE payment component; partial UNIQUE indexes allow at most one pending submission per order and per payment. Cash creates no submission, needs no receipt and never increments `receipt_attempts`; digital methods need a server-validated private path and reference, so the existing two-receipt cap permits only two digital evidence submissions per order |
 | Admin id is session-derived, not client-supplied | The server action verifies the session with `auth.getUser()` and the active `administrators` row via the existing RLS pattern; every mutating RPC rechecks with `private.require_active_admin`. No RPC reads `auth.uid()`. Guest flows use only the private tracking token; public errors do not leak SQL details |
+| Guest receipt re-view is token-only and read-only (OQ-12 resolved) | `getReceiptUrlsForTracking` accepts only the 64-hex token, resolves the order through service-role `get_order_for_tracking`, reads only that order's receipt metadata through the admin client, and mints 300-second signed URLs for all submitted receipts when a payment is `approved`/`rejected` and the order is not `canceled`/`expired`. Extra client fields are ignored; errors are generic; no storage object is listed, uploaded, removed or given a new policy |
 | Payment/POS/refund concurrency | UNIQUE idempotency keys on `payments` and `payment_refunds`, partial unique pending-submission indexes, row locks with deterministic payment → order order (reservation locks stay in the M3 RPCs), and advisory locks for POS and refund; repeats are idempotent no-ops with no double inventory deduction or double refund |
-| Refund boundaries | Append-only `payment_refunds` rows, currency copied from the payment, over-refund blocked, `refunded_partial`/`refunded_full` status; OQ-7 stays OPEN — the method is non-empty free text with no invented domain |
+| Refund boundaries | Append-only `payment_refunds` rows, currency copied from the payment, over-refund blocked, `refunded_partial`/`refunded_full` status; OQ-7 resolved by migration 006 — `payment_refunds.method` is non-empty free text with no invented domain, distinct from the constrained `payments.method` payment-method CHECK |
 | Store schedules cannot restrict orders (OQ-8, migration 009) | `store_settings.business_hours` is publicly readable metadata only. A database `CHECK` plus a mirrored Zod schema enforce the exact `America/Caracas` weekly contract (closed days `[]`, ordered non-overlapping HH24:MI intervals); no checkout/order/payment/inventory/reservation path reads it. Writes still require the existing admin RLS path: the server action uses the cookie-bound anon-key client with a session-derived admin id, so the unchanged `store_settings_admin_all` policy remains the final check with no service-role bypass; the two pure validator functions are `IMMUTABLE`, `search_path = ''`, and executable only by `authenticated`/`service_role`. No grant, policy, RLS setting or seed was added, and no real hours/address were invented |
 
 ## 9. Secrets and configuration
@@ -527,9 +567,14 @@ Payments Module update: the migration 006 subset of this plan (RLS/grants,
 private bucket, service-role RPCs, idempotency and concurrency boundaries) was
 validated behaviorally on a disposable local PostgreSQL cluster; validation
 details are in the final implementation report. Migration 006 is **local-only**
-— no remote apply, deployment, commit or push. Open items OQ-7, OQ-11, OQ-12,
-the Binance identifier/modality details and the cash-on-delivery policy are
-unchanged by it.
+— no remote apply, deployment, commit or push. OQ-7 was resolved by migration
+006 itself (non-empty free-text refund method; no value domain invented), and
+OQ-11 was later resolved by confirmed decision #36 (anonymous in-person POS
+sales; no customer fields and no schema change). OQ-12 was resolved by #37/#38
+and implemented as a token-only, read-only server action with all receipts,
+exact 300-second signed URLs and approved/rejected payment eligibility. The other
+open items are the Binance identifier/modality details and the cash-on-delivery
+policy.
 
 Phase 5b update: the migration 007 subset (rate history, service-role rate and
 snapshot RPCs, session-derived admin attribution, idempotency, row locking,

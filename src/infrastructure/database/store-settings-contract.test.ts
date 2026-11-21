@@ -100,7 +100,7 @@ describe("migration 009 contract (static)", () => {
     expect(raw).toContain("No address or opening hour is invented here");
     expect(raw).toContain("Orders are accepted 24/7");
     expect(raw).toContain("INFORMATIONAL ONLY");
-    expect(raw).toContain("Overnight intervals\n-- are not supported");
+    expect(raw).toMatch(/Overnight intervals\r?\n-- are not supported/);
   });
 
   it("does not couple schedules to orders, payments, inventory or reservations", () => {

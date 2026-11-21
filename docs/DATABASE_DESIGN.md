@@ -40,9 +40,11 @@ untouched. This work is called "Phase 4" in older docs and "Phase 5" in tasking;
 both labels refer to the same payments-module scope. Migration
 `007_bcv_rates_and_rounding.sql` subsequently adds the exchange-rate write path
 (§10.1 — OQ-4) and the rounding rule (OQ-5) as an **additive** change; 006 remains
-the applied baseline and 007 rewrites nothing earlier. The
-checkout/payment/tracking **UI**, Realtime publication and the remaining §11
-functions of later phases stay design only. Every
+the applied baseline and 007 rewrites nothing earlier. Migration
+`008_realtime_publication.sql` then publishes three existing tables to Supabase
+Realtime additively (§11 status below); it changes no policy, grant or table.
+The checkout/payment/tracking **UI** and the remaining §11 functions of later
+phases stay design only. Every
 table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
@@ -922,9 +924,21 @@ only):**
   per-currency summary. No UI was added; validation details are in the final
   implementation report.
 
-**Realtime (Phase 6):** `orders`, `payments` and `cancellation_requests` will be
-added to the `supabase_realtime` publication; Realtime respects the same RLS
-policies, so administrators receive only what they may already read.
+**Realtime (Phase 6, backend):** migration `008_realtime_publication.sql` adds
+the existing `orders`, `payments` and `cancellation_requests` tables to the
+managed `supabase_realtime` publication. Membership is checked against
+`pg_catalog.pg_publication_rel` before each `ALTER PUBLICATION ... ADD TABLE`,
+and the publication is created only if absent, so the migration is safely
+repeatable. Publication options are untouched (all change events remain
+enabled) and no table is published wholesale. All three tables keep RLS
+**enabled and forced** with their single `*_admin_all` policy, so Realtime's
+reads are filtered exactly like SQL reads: administrators see rows, anon and
+non-admins see none (financial payments also have no anon table grant). Default
+replica identity is retained: every table has a primary key and the policies
+depend only on `private.is_admin()`, not on row values, so PK-only old tuples
+are sufficient to authorize UPDATE/DELETE events; `REPLICA IDENTITY FULL` is
+not necessary. No frontend subscription, policy, grant or existing object was
+changed, and the migration is local-only.
 
 ## 12. Status value mapping (SPEC Spanish → stored English)
 

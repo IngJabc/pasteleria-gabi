@@ -244,6 +244,14 @@ applied baseline; 007 is the next migration and rewrites nothing earlier.
 - Supabase Realtime notifications for both administrators (new order, new
   receipt, relevant order/payment updates); database remains the source of
   truth.
+- [x] **Supabase Realtime publication — backend implemented locally:** additive
+  migration `008_realtime_publication.sql` adds the existing `orders`, `payments`
+  and `cancellation_requests` tables to the managed `supabase_realtime`
+  publication, repeating safely without duplicate membership. RLS, grants and
+  replica identity are unchanged: these tables stay force-RLS with an
+  admin-only `authenticated` policy, so anon/non-admin clients receive no
+  protected rows; `REPLICA IDENTITY FULL` is not used because the policies do
+  not depend on row values. No frontend subscriptions were added.
 - [x] **OQ-16 / DECISIONS #25 — implemented locally:** recurring receipt-review
   SLA notifications via `supabase/migrations/005_receipt_sla_notifications.sql`
   and the dedicated `supabase/worker/sla-worker.mjs`. Each receipt submission

@@ -330,7 +330,16 @@ Implementation order (each migration ships with its RLS policies; design source:
       table, trigger, function or publication option was changed, and default
       replica identity is retained. Verified locally (static contract plus
       disposable PostgreSQL 001–008); no admin UI subscription was added.
-- [ ] **M6 (Phase 6) remaining:** `store_settings` shape for schedules (OQ-8).
+- [x] **M6 (Phase 6) — OQ-8 store settings schedules:** additive migration
+      `009_store_settings_schedule.sql` defines and validates the canonical
+      `business_hours` JSONB shape on the existing M1 singleton (no new table,
+      no column, no seed): `America/Caracas`, weekly `attention`/`pickup`
+      schedules, closed days as `[]`, multiple non-overlapping HH24:MI
+      intervals. Database CHECK + Zod server action (session-derived admin,
+      cookie-bound client under the existing admin RLS policy, no service-role
+      bypass or new write permission); RLS/policies/grants untouched and
+      schedules never restrict 24/7 checkout. Verified locally (static,
+      behavioral 001–009, server-action tests).
 
 ---
 
@@ -708,6 +717,11 @@ Then, per roadmap phase:
       untouched, so Realtime exposes no row a role cannot already read.
       Validated locally (static + behavioral 001–008); no frontend, worker or
       remote apply.
+- [x] **Phase 6 (OQ-8):** migration 009 defines the `store_settings.business_hours`
+      schedule contract (America/Caracas, weekly attention/pickup, closed days,
+      multiple intervals) with a CHECK constraint and admin-only Zod action;
+      no new table/seed, no RLS/grant change, no order/payment coupling.
+      Validated locally (static + behavioral 001–009 + server actions).
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

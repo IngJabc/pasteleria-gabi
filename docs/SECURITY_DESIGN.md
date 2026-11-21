@@ -151,7 +151,7 @@ Table cells: allowed operations. `—` = no policy ⇒ no access.
 | `products` | SELECT (`is_active`) | ALL | bypass |
 | `product_images` | SELECT (active product only) | ALL | bypass |
 | `delivery_zones` | SELECT (`is_active`) | ALL | bypass |
-| `store_settings` | SELECT | ALL | bypass |
+| `store_settings` | SELECT (no write policy) | ALL (admin-only via `private.is_admin()`) | bypass |
 | `exchange_rates` | SELECT | ALL | bypass |
 | `administrators` | — | SELECT | write only |
 | `orders` | — (tracking via server function) | ALL | bypass |
@@ -436,6 +436,7 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 | Admin id is session-derived, not client-supplied | The server action verifies the session with `auth.getUser()` and the active `administrators` row via the existing RLS pattern; every mutating RPC rechecks with `private.require_active_admin`. No RPC reads `auth.uid()`. Guest flows use only the private tracking token; public errors do not leak SQL details |
 | Payment/POS/refund concurrency | UNIQUE idempotency keys on `payments` and `payment_refunds`, partial unique pending-submission indexes, row locks with deterministic payment → order order (reservation locks stay in the M3 RPCs), and advisory locks for POS and refund; repeats are idempotent no-ops with no double inventory deduction or double refund |
 | Refund boundaries | Append-only `payment_refunds` rows, currency copied from the payment, over-refund blocked, `refunded_partial`/`refunded_full` status; OQ-7 stays OPEN — the method is non-empty free text with no invented domain |
+| Store schedules cannot restrict orders (OQ-8, migration 009) | `store_settings.business_hours` is publicly readable metadata only. A database `CHECK` plus a mirrored Zod schema enforce the exact `America/Caracas` weekly contract (closed days `[]`, ordered non-overlapping HH24:MI intervals); no checkout/order/payment/inventory/reservation path reads it. Writes still require the existing admin RLS path: the server action uses the cookie-bound anon-key client with a session-derived admin id, so the unchanged `store_settings_admin_all` policy remains the final check with no service-role bypass; the two pure validator functions are `IMMUTABLE`, `search_path = ''`, and executable only by `authenticated`/`service_role`. No grant, policy, RLS setting or seed was added, and no real hours/address were invented |
 
 ## 9. Secrets and configuration
 
@@ -468,6 +469,22 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 - Notifications are informational only — the database stays the source of
   truth (SPEC §13); a forged Realtime message cannot change state. No frontend
   subscription was added by this milestone.
+
+### 10.1 Store settings schedules (OQ-8)
+
+- The existing `store_settings` singleton keeps its original M1 columns and
+  force-RLS boundary. Migration 009 only adds a `CHECK` constraint on
+  `business_hours` plus two pure private validators; it creates no table,
+  column, trigger, policy, grant or seed.
+- `anon` retains public SELECT with no write policy; non-admin `authenticated`
+  users still have no matching write policy; admins retain the original ALL
+  policy through `private.is_admin()`. The server action uses the cookie-bound
+  anon-key client only after `requireActiveAdminId()` succeeds, so that policy
+  is the final write check (deactivation between checks affects zero rows); no
+  service-role bypass or client-supplied identity is used.
+- Schedules are explicitly informational (SPEC §14): orders remain accepted
+  24/7, and no worker, cron, Realtime publication, delivery-price, payment,
+  inventory or reservation-expiry rule consumes the schedule.
 
 ## 11. SPEC §16 requirement → design mapping
 
@@ -533,4 +550,13 @@ membership, unchanged force-RLS/policies/grants, zero rows for `anon` and
 non-admin `authenticated` clients, retained admin reads, and unchanged
 order/payment/cancellation flows. No Realtime server, remote project, deployment
 or secret was touched; all changes remain local and uncommitted.
+
+Phase 6 OQ-8 update: migration 009 was validated statically and behaviorally on
+a disposable local PostgreSQL cluster (001–009) plus unit tests for the Zod
+contract and server action. The checks cover singleton preservation with a NULL
+schedule, acceptance of closed days and multiple ordered intervals, rejection of
+malformed documents at the database boundary, unchanged anon/non-admin/admin
+write boundaries, and unchanged 24/7 order/reservation creation after setting or
+clearing a schedule. No remote apply, deployment, secret or environment change
+was made; all changes remain local and uncommitted.
 

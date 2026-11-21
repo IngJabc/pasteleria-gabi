@@ -264,8 +264,17 @@ applied baseline; 007 is the next migration and rewrites nothing earlier.
   background worker is authorized by the OQ-16-only amendment to DECISIONS #1.
   Validated locally, not applied remotely or deployed.
 - Prepared WhatsApp deep links (no WhatsApp Business API in this release).
-- Store settings: business address for pickup, attention/preparation hours
-  (informative, orders accepted 24/7).
+- [x] **OQ-8 — store settings schedule structure — backend implemented locally:**
+      additive migration `009_store_settings_schedule.sql` defines and validates
+      the `store_settings.business_hours` JSONB contract without creating a new
+      table or seeding data. It stores `timezone: "America/Caracas"`, weekly
+      `attention` and `pickup` schedules with closed days (`[]`) and multiple
+      non-overlapping intervals per day, all HH24:MI. The existing
+      `pickup_address` text column is reused unchanged. Schedules are
+      **informational only**: orders stay 24/7 and nothing in checkout, payment,
+      inventory or reservations reads them. An admin server action with Zod
+      validation writes the singleton; RLS, grants and policies are unchanged.
+      No real address or hours were invented.
 - Automated BCV rate lookup with stored history and last-known-rate fallback,
   reporting its age when the service is unavailable. **Manual rate registration,
   history and age reporting are now implemented in migration 007 (Phase 5b);
@@ -286,7 +295,9 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - Commercial name and visual identity.
 - Final catalog, prices and photographs.
 - Real Pago Móvil data; Binance identifier and modality.
-- Pickup address, WhatsApp number, concrete schedules.
+- Concrete pickup address, WhatsApp number and actual business hours (the
+  `business_hours` JSONB structure is resolved by migration 009 / DECISIONS #35;
+  only the real values remain business data to configure).
 - How the BCV rate is queried and stored (manual administration implemented in
   migration 007; the automatic provider lookup remains a future item).
 - Exact geographic limits of the "north zone" delivery classification.
@@ -298,4 +309,5 @@ From SPEC §19 — must be resolved before implementing the affected flow:
   (POS customer identity), OQ-12 (guest receipt re-view), plus the Binance
   identifier/modality and cash-on-delivery items above. No conversion or
   cross-currency "fully paid" rule was invented. OQ-4 (BCV rate write path) and
-  OQ-5 (rounding rule) were resolved by migration 007 (Phase 5b).
+  OQ-5 (rounding rule) were resolved by migration 007 (Phase 5b); OQ-8
+  (schedule structure) was resolved by migration 009 (Phase 6).

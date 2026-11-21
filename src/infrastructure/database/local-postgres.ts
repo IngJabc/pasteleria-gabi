@@ -119,6 +119,10 @@ alter default privileges in schema public
   grant select, insert, update, delete on tables to anon, authenticated, service_role;
 alter default privileges in schema public
   grant usage, select on sequences to anon, authenticated, service_role;
+
+-- Supabase projects always provide this managed publication. Mirror it locally
+-- so migration 008 is applied against a faithful baseline.
+create publication supabase_realtime;
 `;
 
 function executable(dir: string, base: string): string {

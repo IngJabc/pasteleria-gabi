@@ -452,11 +452,22 @@ code after token validation (no storage policy change). See OQ-12 in TASKS.
 ## 10. Realtime and future surfaces (Phase 6)
 
 - Realtime is enabled per-table via the `supabase_realtime` publication and is
-  **RLS-respecting**: administrators subscribed to `orders`/`payments` changes
-  read through the same `is_admin()` policies. `anon` gets nothing because it
-  has no policy.
+  **RLS-respecting**: administrators subscribed to `orders`/`payments`/
+  `cancellation_requests` changes read through the same `is_admin()` policies.
+  `anon` gets nothing because it has no policy, and non-admin `authenticated`
+  clients are filtered out; `payments` additionally has no anon table grant.
+  Migration 008 was verified behaviorally against those same grants/policies on
+  a disposable cluster (no running Realtime server was contacted).
+- Migration 008 is additive and repeatable: it checks publication membership in
+  `pg_catalog` before each `ALTER PUBLICATION ... ADD TABLE`, adds no grant,
+  policy, function or trigger, and leaves publication options unchanged.
+- Replica identity stays at the default (PK only). The three policies depend on
+  the caller's admin status rather than row values, so Realtime can authorize
+  UPDATE/DELETE from the primary key alone; `REPLICA IDENTITY FULL` would widen
+  the WAL payload without improving this boundary and is not used.
 - Notifications are informational only — the database stays the source of
-  truth (SPEC §13); a forged Realtime message cannot change state.
+  truth (SPEC §13); a forged Realtime message cannot change state. No frontend
+  subscription was added by this milestone.
 
 ## 11. SPEC §16 requirement → design mapping
 
@@ -514,4 +525,12 @@ behavioral coverage for rollback, concurrent creation/rate changes, every
 payment entry point and all immutability paths. Migration 007 is **local-only** —
 no remote apply, deployment, commit or push. OQ-4 and OQ-5 are resolved by it;
 the stale-rate threshold and all other open items above remain open.
+
+Phase 6 Realtime update: migration 008 was validated statically and behaviorally
+on a disposable local PostgreSQL cluster (001–008). The checks cover exact
+publication membership, change-event flags, repeat application without duplicate
+membership, unchanged force-RLS/policies/grants, zero rows for `anon` and
+non-admin `authenticated` clients, retained admin reads, and unchanged
+order/payment/cancellation flows. No Realtime server, remote project, deployment
+or secret was touched; all changes remain local and uncommitted.
 

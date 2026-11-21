@@ -323,8 +323,14 @@ Implementation order (each migration ships with its RLS policies; design source:
       executions. The worker runs once immediately then polls every 15 min with
       no overlapping cycles; SLA processing writes no order/payment/inventory/
       reservation state. Delayed runs create only the current bucket.
-- [ ] **M6 (Phase 6) remaining:** Realtime publication + `store_settings` shape
-      for schedules (OQ-8).
+- [x] **M6 (Phase 6) — Realtime publication:** additive migration
+      `008_realtime_publication.sql` publishes the existing `orders`, `payments`
+      and `cancellation_requests` tables to `supabase_realtime` with a guarded,
+      catalog-based membership check (safe to re-run). No RLS policy, grant,
+      table, trigger, function or publication option was changed, and default
+      replica identity is retained. Verified locally (static contract plus
+      disposable PostgreSQL 001–008); no admin UI subscription was added.
+- [ ] **M6 (Phase 6) remaining:** `store_settings` shape for schedules (OQ-8).
 
 ---
 
@@ -696,6 +702,12 @@ Then, per roadmap phase:
       Pago Móvil snapshot enforcement and snapshot immutability, with server
       actions and local tests. Local only; no UI, remote apply, deployment,
       commit or push.
+- [x] **Phase 6 (Realtime publication):** migration 008 adds `orders`,
+      `payments` and `cancellation_requests` to `supabase_realtime` idempotently;
+      force-RLS, admin-only policies, grants and default replica identity are
+      untouched, so Realtime exposes no row a role cannot already read.
+      Validated locally (static + behavioral 001–008); no frontend, worker or
+      remote apply.
 
 Later phases: see `docs/ROADMAP.md` (inventory → checkout/orders → payments →
 admin panel/POS → realtime/communication/settings).

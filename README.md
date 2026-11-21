@@ -143,4 +143,6 @@ build and render placeholder pages only — no database calls are made.
 | [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | Tables, columns, relationships, indexes, ER diagram (design; M1–M4 + OQ-16 implemented locally) |
 | [`docs/SECURITY_DESIGN.md`](./docs/SECURITY_DESIGN.md) | Roles, access boundaries, RLS/storage policies, OQ-17 token authorization and OQ-16 SLA boundaries (design; M1–M4 + OQ-16 implemented locally) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | Key architectural decisions and their rationale |
+| [`docs/AUTONOMOUS_WORKFLOW.md`](./docs/AUTONOMOUS_WORKFLOW.md) | `/autopilot` operation, Git lifecycle, permissions, recovery and checkpoints |
+| [`docs/skills-catalog.md`](./docs/skills-catalog.md) | All 22 installed OpenCode skills and how the workflow routes them |
 | [`TASKS.md`](./TASKS.md) | Checklist of completed and upcoming tasks |

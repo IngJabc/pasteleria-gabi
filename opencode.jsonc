@@ -1,0 +1,125 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // /autopilot starts in the primary orchestrator. Built-in agents remain available.
+  "default_agent": "project-orchestrator",
+
+  // Project-level safety rails. V2 uses the ordered `permissions` array;
+  // the last matching rule wins and agent rules are appended after these.
+  // No agent definition adds a later matching `allow` for these resources.
+  "permissions": [
+    // Never push to the default branch, by any common ref spelling.
+    { "action": "shell", "resource": "git push * main", "effect": "deny" },
+    { "action": "shell", "resource": "git push * main *", "effect": "deny" },
+    { "action": "shell", "resource": "git push * main:*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * refs/heads/main", "effect": "deny" },
+    { "action": "shell", "resource": "git push * HEAD:main", "effect": "deny" },
+    { "action": "shell", "resource": "git push * HEAD:refs/heads/main", "effect": "deny" },
+    { "action": "shell", "resource": "git push * *:main", "effect": "deny" },
+    { "action": "shell", "resource": "git push * *:refs/heads/main", "effect": "deny" },
+    { "action": "shell", "resource": "git push * +main", "effect": "deny" },
+
+    // Never force-push, bulk-push or delete remote branches.
+    { "action": "shell", "resource": "git push --force*", "effect": "deny" },
+    { "action": "shell", "resource": "git push -f*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * --force*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * -f*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * * --force*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * * -f*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * +*", "effect": "deny" },
+    { "action": "shell", "resource": "git push --all*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * --all*", "effect": "deny" },
+    { "action": "shell", "resource": "git push --mirror*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * --mirror*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * --delete*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * :*", "effect": "deny" },
+
+    // Never merge or approve a Pull Request. `git merge --ff-only` is allowed
+    // so the documented main-sync step remains possible.
+    { "action": "shell", "resource": "gh pr merge *", "effect": "deny" },
+    { "action": "shell", "resource": "gh pr review *approve*", "effect": "deny" },
+    { "action": "shell", "resource": "gh pr review --approve*", "effect": "deny" },
+
+    // Never destroy local work.
+    { "action": "shell", "resource": "git reset --hard*", "effect": "deny" },
+    { "action": "shell", "resource": "git clean *", "effect": "deny" },
+    { "action": "shell", "resource": "git stash *", "effect": "deny" },
+    { "action": "shell", "resource": "git restore *", "effect": "deny" },
+
+    // Never apply remote database changes, including npx/npm exec invocations.
+    { "action": "shell", "resource": "supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "npx supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "npx supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "npx * supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "npx * supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "npm exec* supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "npm exec* supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "pnpm dlx supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "pnpm dlx supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "pnpm dlx * supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "pnpm dlx * supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "yarn dlx supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "yarn dlx supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "yarn dlx * supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "yarn dlx * supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "bunx supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "bunx supabase db reset*", "effect": "deny" },
+    { "action": "shell", "resource": "bunx * supabase db push*", "effect": "deny" },
+    { "action": "shell", "resource": "bunx * supabase db reset*", "effect": "deny" }
+  ],
+
+  // Hard policies are evaluated after permissions, saved approvals and agent
+  // rules. They cannot be re-enabled by a later agent `allow`.
+  "policies": [
+    { "action": "tool.use", "resource": "shell:git push * main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * main *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * main:*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * refs/heads/main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * HEAD:main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * HEAD:refs/heads/main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * *:main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * *:refs/heads/main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * +main", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push --force*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push -f*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * --force*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * -f*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * * --force*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * * -f*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * +*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push --all*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * --all*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push --mirror*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * --mirror*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * --delete*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git push * :*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:gh pr merge *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:gh pr review *approve*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:gh pr review --approve*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git reset --hard*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git clean *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git stash *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:git restore *", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:npx supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:npx supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:npx * supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:npx * supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:npm exec* supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:npm exec* supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:pnpm dlx supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:pnpm dlx supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:pnpm dlx * supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:pnpm dlx * supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:yarn dlx supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:yarn dlx supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:yarn dlx * supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:yarn dlx * supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:bunx supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:bunx supabase db reset*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:bunx * supabase db push*", "effect": "deny" },
+    { "action": "tool.use", "resource": "shell:bunx * supabase db reset*", "effect": "deny" }
+  ]
+}

@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# autonomous workflow runtime state (cache only; Git/GitHub/docs are truth)
+/.opencode/autopilot-state.json

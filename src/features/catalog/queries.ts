@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  adminProductSchema,
   catalogProductSchema,
   productImageRowSchema,
   productRowSchema,
+  type AdminProduct,
   type CatalogProduct,
   type ProductRow,
 } from "./schemas";
@@ -104,6 +106,41 @@ export async function getActiveProductBySlug(
 }
 
 /**
+ * Admin read: all products, active and inactive, with their images. It reuses
+ * the same injected client/session boundary and never grants service-role access.
+ */
+export async function listAdminProducts(
+  client: CatalogClient,
+): Promise<AdminProduct[]> {
+  const { data, error } = await client
+    .from("products")
+    .select(PRODUCT_COLUMNS)
+    .order("id", { ascending: true });
+
+  if (error) throw new Error(catalogUnavailableError);
+  if (!data) return [];
+
+  const rows: ProductRow[] = [];
+  for (const raw of data) {
+    const parsed = productRowSchema.safeParse(raw);
+    if (!parsed.success) throw new Error(catalogUnavailableError);
+    rows.push(parsed.data);
+  }
+  rows.sort((a, b) => a.id - b.id);
+  if (rows.length === 0) return [];
+
+  const images = await fetchImages(
+    client,
+    rows.map((row) => row.id),
+    catalogUnavailableError,
+  );
+
+  return rows.map((row) =>
+    toAdminProduct(row, images.get(row.id) ?? [], catalogUnavailableError),
+  );
+}
+
+/**
  * One images query for the whole list (no per-product waterfall). Images are
  * requested in `position` order with `id` as a deterministic tie-breaker.
  */
@@ -155,29 +192,51 @@ async function fetchImages(
   return grouped;
 }
 
+function mapImages(row: ProductRow, images: ImageWithUrl[]) {
+  const ordered = [...images].sort(
+    (a, b) => a.position - b.position || a.id - b.id,
+  );
+  return ordered.map((image, index) => ({
+    id: image.id,
+    position: image.position,
+    url: image.url,
+    // The schema stores no per-image caption; the product name plus a
+    // sequential position is a truthful, descriptive alternative text.
+    alt: `Imagen ${index + 1} de ${row.name}`,
+  }));
+}
+
 function toCatalogProduct(
   row: ProductRow,
   images: ImageWithUrl[],
   errorMessage: string,
 ): CatalogProduct {
-  const ordered = [...images].sort(
-    (a, b) => a.position - b.position || a.id - b.id,
-  );
-
   const parsed = catalogProductSchema.safeParse({
     id: row.id,
     slug: row.slug,
     name: row.name,
     description: row.description,
     priceUsd: row.price_usd,
-    images: ordered.map((image, index) => ({
-      id: image.id,
-      position: image.position,
-      url: image.url,
-      // The schema stores no per-image caption; the product name plus a
-      // sequential position is a truthful, descriptive alternative text.
-      alt: `Imagen ${index + 1} de ${row.name}`,
-    })),
+    images: mapImages(row, images),
+  });
+
+  if (!parsed.success) throw new Error(errorMessage);
+  return parsed.data;
+}
+
+function toAdminProduct(
+  row: ProductRow,
+  images: ImageWithUrl[],
+  errorMessage: string,
+): AdminProduct {
+  const parsed = adminProductSchema.safeParse({
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    priceUsd: row.price_usd,
+    isActive: row.is_active,
+    images: mapImages(row, images),
   });
 
   if (!parsed.success) throw new Error(errorMessage);

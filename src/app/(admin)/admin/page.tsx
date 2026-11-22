@@ -72,6 +72,14 @@ export default async function AdminHomePage() {
           Registra ventas en efectivo y reembolsos de pagos ya registrados. El
           servidor valida cada operación y recalcula los importes.
         </p>
+        <p>
+          <a
+            href="/admin/productos"
+            className="inline-flex min-h-11 items-center rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:outline-zinc-300"
+          >
+            Administrar productos
+          </a>
+        </p>
       </header>
 
       <section aria-labelledby="pos-heading" className={sectionClass}>

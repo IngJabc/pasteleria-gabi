@@ -12,8 +12,8 @@ import {
  * `createSupabaseServerClient()` in production, a fake in offline tests), so
  * this module stays pure and never reads cookies or configuration itself.
  *
- * Narrow structural type derived from the installed supabase-js client; no
- * generated `Database` generic and no service-role access are involved.
+ * Narrow structural type derived from the installed supabase-js client; it
+ * accepts the typed request-bound client and never grants service-role access.
  */
 export type CatalogClient = Pick<SupabaseClient, "from" | "storage">;
 

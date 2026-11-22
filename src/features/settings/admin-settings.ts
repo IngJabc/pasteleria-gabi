@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/infrastructure/supabase/server";
 import { requireActiveAdminId } from "@/features/payments/admin-session";
+import type { Database } from "@/infrastructure/database/database.types";
 import {
   storeSettingsRowSchema,
   updateStoreSettingsSchema,
@@ -22,6 +23,8 @@ const invalidSessionError = "La sesión del administrador no es válida.";
 const invalidInputError = "Los horarios o la dirección no son válidos.";
 const genericError = "No se pudo guardar la configuración. Inténtalo de nuevo.";
 
+type StoreSettingsUpdate = Database["public"]["Tables"]["store_settings"]["Update"];
+
 export type UpdateStoreSettingsResult =
   | { ok: true; settings: StoreSettingsRow }
   | { ok: false; error: string };
@@ -39,7 +42,7 @@ export async function updateStoreSettings(input: UpdateStoreSettingsInput): Prom
     return { ok: false, error: invalidSessionError };
   }
 
-  const patch: Record<string, unknown> = { updated_by: adminId };
+  const patch: StoreSettingsUpdate = { updated_by: adminId };
   if (parsed.data.pickupAddress !== undefined) {
     patch.pickup_address = parsed.data.pickupAddress;
   }

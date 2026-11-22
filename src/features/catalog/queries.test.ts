@@ -3,6 +3,7 @@ import {
   catalogUnavailableError,
   getActiveProductBySlug,
   listActiveProducts,
+  listAdminProducts,
   productUnavailableError,
   type CatalogClient,
 } from "./queries";
@@ -236,5 +237,25 @@ describe("public catalog queries", () => {
     await expect(
       getActiveProductBySlug(client, activeA.slug),
     ).rejects.toThrow(productUnavailableError);
+  });
+});
+
+describe("listAdminProducts", () => {
+  it("returns active and inactive products in deterministic id order", async () => {
+    const { client, productsQuery } = makeClient({
+      data: [
+        { id: 2, slug: "b", name: "B", description: "d", price_usd: "2.00", is_active: false },
+        { id: 1, slug: "a", name: "A", description: "d", price_usd: 1, is_active: true },
+      ],
+      error: null,
+    });
+    const products = await listAdminProducts(client);
+    expect(products.map((p) => [p.id, p.isActive])).toEqual([[1, true], [2, false]]);
+    expect(productsQuery.eq).not.toHaveBeenCalledWith("is_active", true);
+  });
+
+  it("throws stable Spanish error on database failure", async () => {
+    const { client } = makeClient({ data: null, error: { message: "SQL detail" } });
+    await expect(listAdminProducts(client)).rejects.toThrow(catalogUnavailableError);
   });
 });

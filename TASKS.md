@@ -726,7 +726,7 @@ Then, per roadmap phase:
       `product-images` bucket.
 - [ ] Supabase Auth for the two administrators; protected `/admin` shell
       (server-side check against `administrators`).
-- [ ] Admin product CRUD (+ `audit_log` entries).
+- [x] Admin product CRUD (+ `audit_log` entries). Implemented locally on `features/admin-product-crud`: session-gated `/admin/productos` with create/edit/activate-deactivate, product image upload/remove/reorder in the public `product-images` bucket, and one self-attributed `audit_log` row per successful mutation via the session client (no service-role, no migration/RLS change). D1 hard delete out of scope; D2 slug editable and validated with duplicate 23505 mapped to Spanish error; D3 audit failure after mutation returns the truthful Spanish error; D4 reorder is bounded to one product with sequential updates and verification read; D5 no E2E because B2/B3 block admin auth and seed.
 - [ ] Catalog/product seed once B3 resolves.
 - [x] **Phase 4 (OQ-17):** quote-acceptance transition implemented in migration
       004: one fixed 20-minute acceptance window in

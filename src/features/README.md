@@ -13,7 +13,7 @@ POS and refund forms; other feature UI remains planned:
 
 | Folder | Capability |
 | --- | --- |
-| `catalog/` | **Public UI implemented:** active product list/detail with `product-images` URLs and Zod-validated server reads; admin product management remains planned. |
+| `catalog/` | **Public UI + admin CRUD implemented locally:** active list/detail reads, `/admin/productos` session-gated create/edit/activate-deactivate and image upload/remove/reorder with `audit_log` writes; seed remains pending (B3). |
 | `cart/` | Client-side cart state for the storefront. |
 | `checkout/` | Guest checkout: customer data, delivery/pickup, server-side recalculation. |
 | `orders/` | **Partial:** quote acceptance by private tracking token (OQ-17); full online-order/tracking UI still planned (SPEC §7). |

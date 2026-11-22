@@ -88,8 +88,9 @@ Rules:
 - The service-role key is **never** read from client code: `env.server.ts` and
   `admin.ts` import the `server-only` marker, so a client-side import fails at
   build time, and the key is a non-`NEXT_PUBLIC_` variable (never inlined).
-- Database TypeScript types (generated from migrations) will be added to these
-  clients in Phase 1; Phase 0 invents no schema.
+- Database TypeScript types are generated from migrations and all three clients
+  use the generated-derived `Database` generic, with a narrow adapter for five
+  decimal/null RPC `Args`. No schema is invented.
 - Critical operations (stock reservation, FIFO allocation, payment registration)
   will be implemented as PostgreSQL functions/RPC so they are atomic and
   idempotent (SPEC §8), executed from the server.
@@ -101,7 +102,8 @@ Rules:
 `/` and `/productos/[slug]` call `createSupabaseServerClient()` inside their data
 components. The request-bound anon client reads only active rows from `products`
 and their `product_images` through existing row-level security (RLS) policies.
-The work uses no service-role client and no generated `Database` generic.
+The work uses no service-role client; the shared server client now carries the
+generated-derived `Database` generic like the other two clients.
 `src/features/catalog/schemas.ts` validates PostgREST rows and the rendered
 product shape with Zod. `queries.ts` accepts a narrow injected client, orders
 products by `id`, batches image reads, orders images by `position` then `id`, and

@@ -98,12 +98,17 @@ access have different trust levels; `@supabase/ssr` is the required integration.
 **Decision:** `src/infrastructure/supabase/{client,server,admin}.ts` are the only
 places that construct Supabase clients. The admin module and the server-only env
 module import the `server-only` marker, so importing them from a Client
-Component fails at build time. The `Database` generic is deliberately omitted
-until real migrations exist (no invented schema).
+Component fails at build time. All three clients now use the explicit `Database`
+generic derived from CLI-generated types, which come from the real migrations,
+never an invented schema. Run `node scripts/generate-database-types.mjs` to
+regenerate them locally. `database.client.types.ts` overrides five RPC `Args` to
+keep decimal strings and explicit nulls in the validated wire contract; the
+generated PostgreSQL `numeric` to `number` mapping would otherwise change it.
 
 **Consequences:** One seam to audit; credentials cannot silently leak to the
 client. `server-only` adds one tiny dependency, justified by the service-role
-rule in SPEC §16.
+rule in SPEC §16. The adapter changes types only: runtime payloads, credential
+boundaries and `server-only` are unchanged.
 
 ## 6. Zod as the single validation library — status: accepted
 

@@ -41,8 +41,10 @@ change. Admin auth, admin CRUD and the catalog/product seed remain pending.
 - Create the Supabase project; provision environment variables (no credentials
   in source code).
 - First migration: products, images, store settings; RLS policies on every
-  table; generate TypeScript database types and wire them into the Supabase
-  clients.
+  table. ✅ `node scripts/generate-database-types.mjs` builds TypeScript types
+  from all nine local migrations (plain PostgreSQL 17, no Docker or remote
+  project); all three Supabase clients use a generated-derived `Database` with
+  a narrow five-RPC decimal/null adapter.
 - Public catalog: product list and detail with photographs (public Storage
   bucket), active/inactive state, USD prices.
 - Supabase Auth for exactly two administrators; admin authorization validated

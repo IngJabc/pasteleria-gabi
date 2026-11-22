@@ -87,6 +87,17 @@ Then fill `.env.local` with the values from the Supabase dashboard.
 | `npm run test:watch` | Run Vitest in watch mode |
 | `npm run worker:sla` | Run the OQ-16 SLA worker once installed as a scheduled process (needs `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; optional `SLA_POLL_MS`/`SLA_SHUTDOWN_TIMEOUT_MS`) |
 
+### Database types
+
+To regenerate `src/infrastructure/database/database.types.ts` from all nine
+local migrations, run `node scripts/generate-database-types.mjs` manually. The
+command creates a disposable PostgreSQL 17 cluster on loopback, applies the
+local stub and migrations, runs the installed Supabase CLI and cleans up. It
+needs no Docker, remote project or `.env.local`. All three Supabase clients use
+the generated-derived `Database` from `database.client.types.ts`, which
+overrides five RPC `Args` to preserve decimal-string money and explicit nulls
+in the validated wire contract.
+
 ## Testing
 
 Tests are written with Vitest and colocated with the code they cover as

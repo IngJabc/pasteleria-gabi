@@ -207,7 +207,7 @@ admin auth, admin CRUD and the catalog/product seed remain pending.
 
 | # | Blocker | Needed for | Owner |
 | --- | --- | --- | --- |
-| B1 | ~~A Supabase project must exist and `.env.local` must be filled (account + credentials)~~ — **resolved: the project exists and M1 has been applied to it**; `.env.local` still needs filling for type generation/auth | Applying *any* migration, generating types, auth | User / project owner |
+| B1 | ~~A Supabase project must exist and `.env.local` must be filled (account + credentials)~~ **resolved: the project exists and M1 has been applied to it**; `.env.local` remains needed for runtime/auth, but local CLI type generation uses a loopback database URL and does not need it | Applying *any* migration, runtime/auth (local type generation is unblocked) | User / project owner |
 | B2 | E-mail addresses of the two administrators (OQ-1 — not covered by SPEC) | Seeding `administrators` + creating auth accounts | Business owner |
 | B3 | Final catalog: product names, descriptions, prices, photographs (OQ-2, SPEC §19) | Seeding `products` (schema itself is *not* blocked) | Business owner |
 | B4 | Visual identity decision (SPEC §19) — only for final UI copy/branding, not for schema | Storefront presentation | Business owner |
@@ -717,8 +717,11 @@ Validation (Phase 5b / OQ-4 + OQ-5 — migration 007, local only):
 
 Then, per roadmap phase:
 
-- [ ] Generate TypeScript database types and add the `Database` generic to the
-      three Supabase clients (after M1).
+- [x] Generate TypeScript database types and add the `Database` generic to the
+      three Supabase clients (after M1). Local generation uses
+      `node scripts/generate-database-types.mjs` over all nine migrations; all
+      three clients use the generated-derived `Database` with a narrow five-RPC
+      decimal/null adapter.
 - [x] Public catalog pages (list + detail) fed from the database; public
       `product-images` bucket.
 - [ ] Supabase Auth for the two administrators; protected `/admin` shell
@@ -758,6 +761,17 @@ Then, per roadmap phase:
       multiple intervals) with a CHECK constraint and admin-only Zod action;
       no new table/seed, no RLS/grant change, no order/payment coupling.
       Validated locally (static + behavioral 001–009 + server actions).
+
+## Database types (Phase 1)
+
+Validation: `npm test` passed 28 files and 316 tests; `npm run lint` passed
+with 0 errors and 2 pre-existing warnings; `npm run build` passed; `npm run
+typecheck` exited 0 with no diagnostics; `npm run validate:autopilot` passed
+235 checks; `git diff --check` passed. The generator builds `database.types.ts`
+from all nine local migrations on a disposable plain PostgreSQL 17 cluster,
+with no Docker or remote project. All three clients use the generated-derived
+`Database`, and a five-RPC `Args` adapter keeps decimal-string money and
+explicit nulls in the validated wire contract.
 
 ## Public catalog delivery (Phase 1)
 

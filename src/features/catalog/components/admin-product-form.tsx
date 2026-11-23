@@ -12,6 +12,16 @@ import {
   slugifyProductName,
   type AdminProduct,
 } from "../schemas";
+import {
+  buttonPrimaryClass,
+  buttonSecondaryClass,
+  hintClass,
+  inputClass,
+  labelClass,
+  LiveRegion,
+  textareaClass,
+} from "@/components/ui/ui";
+import { useToast } from "@/components/ui/toast";
 
 type Props = {
   product?: AdminProduct | null;
@@ -19,20 +29,13 @@ type Props = {
   onCancelEdit?: () => void;
 };
 
-const inputClass =
-  "min-h-11 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 transition-colors aria-invalid:border-red-700 aria-invalid:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:aria-invalid:border-red-400 dark:aria-invalid:bg-red-950/30 dark:focus-visible:outline-zinc-300";
-const labelClass = "mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200";
-const buttonClass =
-  "min-h-11 cursor-pointer rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 dark:focus-visible:outline-zinc-100";
-const secondaryClass =
-  "min-h-11 cursor-pointer rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:outline-zinc-300";
-
 export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<string | null>(null);
   const [ok, setOk] = useState<boolean | null>(null);
   const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
   const [slugTouched, setSlugTouched] = useState(Boolean(product));
+  const { showToast } = useToast();
   const [name, setName] = useState(product?.name ?? "");
   const [slug, setSlug] = useState(product?.slug ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
@@ -76,7 +79,9 @@ export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
     const parsed = productInputSchema.safeParse(candidate);
     if (!parsed.success) {
       setOk(false);
-      setFeedback(parsed.error.issues[0]?.message ?? invalidProductInputError);
+      const msg = parsed.error.issues[0]?.message ?? invalidProductInputError;
+      setFeedback(msg);
+      showToast(msg, "error");
       return;
     }
 
@@ -87,13 +92,13 @@ export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
         ? await updateProduct({ ...parsed.data, productId: product.id })
         : await createProduct(parsed.data);
       setOk(result.ok);
-      setFeedback(
-        result.ok
-          ? product
-            ? "Producto actualizado."
-            : "Producto creado."
-          : result.error,
-      );
+      const message = result.ok
+        ? product
+          ? "Producto actualizado."
+          : "Producto creado."
+        : result.error;
+      setFeedback(message);
+      showToast(message, result.ok ? "success" : "error");
       if (result.ok) {
         onSaved(result.product);
         if (!product) {
@@ -114,12 +119,13 @@ export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
 
   return (
     <form
+      id={formId}
       aria-labelledby={headingId}
       aria-busy={isPending}
       onSubmit={onSubmit}
-      className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+      className="space-y-4 rounded-card border border-rose/60 bg-cream p-5"
     >
-      <h3 id={headingId} className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+      <h3 id={headingId} className="font-display text-lg font-extrabold text-plum">
         {product ? `Editar: ${product.name}` : "Nuevo producto"}
       </h3>
 
@@ -132,7 +138,7 @@ export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
 
       <div>
         <label htmlFor={`${formId}-slug`} className={labelClass}>Slug <span aria-hidden="true">*</span></label>
-        <p id={`${formId}-slug-hint`} className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p id={`${formId}-slug-hint`} className={hintClass}>
           Letras minúsculas, números y guiones. Define la URL /productos/slug.
         </p>
         <input id={`${formId}-slug`} required maxLength={120} pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$"
@@ -146,12 +152,12 @@ export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
         <label htmlFor={`${formId}-description`} className={labelClass}>Descripción <span aria-hidden="true">*</span></label>
         <textarea id={`${formId}-description`} required maxLength={2000} rows={3} value={description}
           onChange={(e) => setDescription(e.target.value)} onBlur={syncFieldValidity} onInvalid={syncFieldValidity}
-          aria-invalid={invalidFields[`${formId}-description`] ?? false} className={inputClass} />
+          aria-invalid={invalidFields[`${formId}-description`] ?? false} className={textareaClass} />
       </div>
 
       <div>
         <label htmlFor={`${formId}-price`} className={labelClass}>Precio USD <span aria-hidden="true">*</span></label>
-        <p id={`${formId}-price-hint`} className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p id={`${formId}-price-hint`} className={hintClass}>
           Hasta dos decimales. Ejemplo: 12.50
         </p>
         <input id={`${formId}-price`} required inputMode="decimal" pattern="^\d+(\.\d{1,2})?$"
@@ -160,27 +166,26 @@ export function AdminProductForm({ product, onSaved, onCancelEdit }: Props) {
           aria-invalid={invalidFields[`${formId}-price`] ?? false} className={inputClass} />
       </div>
 
-      <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+      <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-ink">
         <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)}
-          className="size-5 rounded border-zinc-300 accent-zinc-900 dark:accent-zinc-100" />
+          className="size-5 rounded-field border border-rose accent-pink" />
         Producto activo en el catálogo público
       </label>
 
       <div className="flex flex-wrap gap-3">
-        <button type="submit" disabled={isPending} className={buttonClass}>
+        <button type="submit" disabled={isPending} className={buttonPrimaryClass}>
           {isPending ? "Guardando…" : product ? "Guardar cambios" : "Crear producto"}
         </button>
         {product && onCancelEdit ? (
-          <button type="button" disabled={isPending} onClick={onCancelEdit} className={secondaryClass}>
+          <button type="button" disabled={isPending} onClick={onCancelEdit} className={buttonSecondaryClass}>
             Cancelar edición
           </button>
         ) : null}
       </div>
 
-      <p role="status" aria-live="polite" aria-atomic="true"
-        className={`min-h-6 text-sm ${ok === false ? "text-red-700 dark:text-red-300" : "text-zinc-600 dark:text-zinc-400"}`}>
+      <LiveRegion className={ok === false ? "text-pink" : "text-muted"}>
         {isPending ? "Guardando…" : (feedback ?? "")}
-      </p>
+      </LiveRegion>
     </form>
   );
 }

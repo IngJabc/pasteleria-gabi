@@ -2,34 +2,44 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import {
-  ProductDetail,
-  ProductDetailSkeleton,
-} from "@/features/catalog/components/product-detail";
+import { ProductDetail } from "@/features/catalog/components/product-detail";
+import { ProductDetailSkeleton } from "@/features/catalog/components/product-detail-skeleton";
 import { getActiveProductBySlug } from "@/features/catalog/queries";
+import {
+  getActiveDeliveryZones,
+  getProductStock,
+} from "@/features/catalog/public-data";
 import { createSupabaseServerClient } from "@/infrastructure/supabase/server";
 
-/** Static only: dynamic metadata would read runtime data outside Suspense. */
 export const metadata: Metadata = {
   title: "Detalle del producto",
   description: "Información del producto disponible en el catálogo público.",
 };
 
-/** Static shell; params and database access stay inside the Suspense boundary. */
+// Product detail reads request-bound Supabase/cookies; block prerendering.
+export const instant = false;
+
 export default function ProductPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-12">
-      <nav aria-label="Ruta de navegación">
-        <Link
-          href="/"
-          className="inline-flex min-h-11 items-center rounded-md text-sm font-medium text-zinc-700 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 dark:text-zinc-300 dark:focus-visible:outline-zinc-300"
-        >
-          Volver al catálogo
+    <main className="container-page flex flex-col gap-8 py-10">
+      <nav aria-label="Ruta de navegación" className="text-sm text-muted">
+        <Link href="/" className="hover:text-pink hover:underline">
+          Inicio
         </Link>
+        <span aria-hidden="true"> / </span>
+        <Link href="/productos" className="hover:text-pink hover:underline">
+          Nuestras tortas
+        </Link>
+        <span aria-hidden="true"> / </span>
+        <span aria-current="page" className="text-ink">
+          <Suspense fallback={null}>
+            <SlugName params={params} />
+          </Suspense>
+        </span>
       </nav>
 
       <Suspense fallback={<ProductDetailSkeleton />}>
@@ -37,6 +47,11 @@ export default function ProductPage({
       </Suspense>
     </main>
   );
+}
+
+async function SlugName({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  return <>{decodeURIComponent(slug)}</>;
 }
 
 async function CatalogProduct({
@@ -50,5 +65,10 @@ async function CatalogProduct({
 
   if (!product) notFound();
 
-  return <ProductDetail product={product} />;
+  const [available, zones] = await Promise.all([
+    getProductStock(product.id),
+    getActiveDeliveryZones(),
+  ]);
+
+  return <ProductDetail product={product} available={available} zones={zones} />;
 }

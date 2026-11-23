@@ -25,7 +25,6 @@ const paymentRowsSchema = z.array(
 const signedUrlSchema = z.string().url();
 
 const excludedOrderStatuses = new Set(["canceled", "expired"]);
-const reviewedPaymentStatuses = new Set(["approved", "rejected"]);
 
 export async function getReceiptUrlsForTracking(input: {
   trackingToken: string;
@@ -64,13 +63,6 @@ export async function getReceiptUrlsForTracking(input: {
 
     const payments = paymentRowsSchema.safeParse(paymentsResult.data);
     if (!payments.success || payments.data.length === 0) {
-      return { ok: false, error: receiptReviewUnavailableError };
-    }
-
-    const hasReviewedPayment = payments.data.some((payment) =>
-      reviewedPaymentStatuses.has(payment.status),
-    );
-    if (!hasReviewedPayment) {
       return { ok: false, error: receiptReviewUnavailableError };
     }
 

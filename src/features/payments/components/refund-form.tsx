@@ -7,6 +7,7 @@ import {
   type MouseEvent,
   type SyntheticEvent,
 } from "react";
+import { useToast } from "@/components/ui/toast";
 import {
   recordPaymentRefund,
   type RefundResult,
@@ -18,19 +19,19 @@ import {
   positiveMoneyMessage,
   resolveIdempotencyKey,
 } from "@/features/payments/admin-ui";
+import {
+  buttonPrimaryClass,
+  buttonSecondaryClass,
+  hintClass,
+  inputClass,
+  labelClass,
+  LiveRegion,
+  textareaClass,
+} from "@/components/ui/ui";
 
 const paymentIdPattern = String.raw`^[1-9]\d*$`;
 const invalidPaymentIdMessage = "Revisa el identificador del pago.";
 const unexpectedError = "No se pudo completar la operación. Inténtalo de nuevo.";
-
-const inputClass =
-  "min-h-11 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 transition-colors aria-invalid:border-red-700 aria-invalid:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:aria-invalid:border-red-400 dark:aria-invalid:bg-red-950/30 dark:focus-visible:outline-zinc-300";
-const textareaClass = `${inputClass} resize-y`;
-const labelClass = "mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200";
-const primaryButtonClass =
-  "min-h-11 cursor-pointer rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 dark:focus-visible:outline-zinc-100";
-const secondaryButtonClass =
-  "min-h-11 cursor-pointer rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:outline-zinc-300";
 
 /** Client form for refunds. Currency and administrator identity stay server-side. */
 export function RefundForm() {
@@ -41,6 +42,7 @@ export function RefundForm() {
   const [result, setResult] = useState<RefundResult | null>(null);
   const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
   const [isPending, startTransition] = useTransition();
+  const { showToast } = useToast();
 
   function syncFieldValidity(
     event: SyntheticEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -75,6 +77,7 @@ export function RefundForm() {
 
     if (!Number.isSafeInteger(paymentId) || paymentId <= 0) {
       setFeedback(invalidPaymentIdMessage);
+      showToast(invalidPaymentIdMessage, "error");
       event.currentTarget
         .querySelector<HTMLInputElement>("#refund-payment-id")
         ?.focus();
@@ -83,6 +86,7 @@ export function RefundForm() {
 
     if (!isPositiveMoneyInput(amount)) {
       setFeedback(positiveMoneyMessage);
+      showToast(positiveMoneyMessage, "error");
       event.currentTarget.querySelector<HTMLInputElement>("#refund-amount")?.focus();
       return;
     }
@@ -97,16 +101,17 @@ export function RefundForm() {
           idempotencyKey: resolveIdempotencyKey("reembolso", idempotencyKey, "retry"),
         });
         setResult(actionResult);
-        setFeedback(
-          actionResult.ok
-            ? actionResult.idempotent
-              ? "Este reembolso ya estaba registrado con la clave actual."
-              : "Reembolso registrado."
-            : actionResult.error,
-        );
+        const message = actionResult.ok
+          ? actionResult.idempotent
+            ? "Este reembolso ya estaba registrado con la clave actual."
+            : "Reembolso registrado."
+          : actionResult.error;
+        setFeedback(message);
+        showToast(message, actionResult.ok ? "success" : "error");
       } catch {
         setResult({ ok: false, error: unexpectedError });
         setFeedback(unexpectedError);
+        showToast(unexpectedError, "error");
       }
     });
   }
@@ -132,8 +137,8 @@ export function RefundForm() {
       onSubmit={handleSubmit}
       className="space-y-6"
     >
-      <fieldset className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
-        <legend className="px-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+      <fieldset className="space-y-4 rounded-card border border-rose/60 bg-cream p-4">
+        <legend className="px-2 font-display text-sm font-bold text-plum">
           Datos del reembolso
         </legend>
 
@@ -143,7 +148,7 @@ export function RefundForm() {
           </label>
           <p
             id="refund-payment-id-hint"
-            className="mb-2 text-sm text-zinc-600 dark:text-zinc-400"
+            className={hintClass}
           >
             Número entero del pago registrado.
           </p>
@@ -168,7 +173,7 @@ export function RefundForm() {
           <label htmlFor="refund-amount" className={labelClass}>
             Monto a reembolsar <span aria-hidden="true">*</span>
           </label>
-          <p id="refund-amount-hint" className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <p id="refund-amount-hint" className={hintClass}>
             Hasta dos decimales, sin símbolo de moneda ni coma. La divisa la
             resuelve el servidor.
           </p>
@@ -193,7 +198,7 @@ export function RefundForm() {
           <label htmlFor="refund-method" className={labelClass}>
             Método <span aria-hidden="true">*</span>
           </label>
-          <p id="refund-method-hint" className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <p id="refund-method-hint" className={hintClass}>
             Escribe el medio usado para devolver el dinero.
           </p>
           <input
@@ -236,7 +241,7 @@ export function RefundForm() {
         <button
           type="submit"
           disabled={isPending}
-          className={primaryButtonClass}
+          className={buttonPrimaryClass}
         >
           {isPending ? "Registrando reembolso…" : "Registrar reembolso"}
         </button>
@@ -244,52 +249,47 @@ export function RefundForm() {
           type="button"
           onClick={handleReset}
           disabled={isPending}
-          className={secondaryButtonClass}
+          className={buttonSecondaryClass}
         >
-          Nueva operación
+          Limpiar formulario
         </button>
       </div>
 
-      <p
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        className={`min-h-6 text-sm ${
-          result && !result.ok
-            ? "text-red-700 dark:text-red-300"
-            : "text-zinc-600 dark:text-zinc-400"
-        }`}
+      <LiveRegion
+        className={
+          result && !result.ok ? "text-pink" : "text-muted"
+        }
       >
         {isPending ? "Registrando reembolso…" : (feedback ?? "")}
-      </p>
+      </LiveRegion>
 
       {success ? (
-        <dl className="grid gap-3 rounded-lg border border-zinc-200 p-4 text-sm sm:grid-cols-2 dark:border-zinc-800">
+        <dl className="grid gap-3 rounded-card border border-rose/60 bg-cream p-4 text-sm sm:grid-cols-2">
           <div>
-            <dt className="font-medium text-zinc-500 dark:text-zinc-400">Reembolso</dt>
-            <dd className="text-zinc-900 dark:text-zinc-50">#{success.refundId}</dd>
+            <dt className="font-medium text-muted">Reembolso</dt>
+            <dd className="text-ink">#{success.refundId}</dd>
           </div>
           <div>
-            <dt className="font-medium text-zinc-500 dark:text-zinc-400">Pago</dt>
-            <dd className="text-zinc-900 dark:text-zinc-50">#{success.paymentId}</dd>
+            <dt className="font-medium text-muted">Pago</dt>
+            <dd className="text-ink">#{success.paymentId}</dd>
           </div>
           <div>
-            <dt className="font-medium text-zinc-500 dark:text-zinc-400">Estado</dt>
-            <dd className="text-zinc-900 dark:text-zinc-50">{success.status}</dd>
+            <dt className="font-medium text-muted">Estado</dt>
+            <dd className="text-ink">{success.status}</dd>
           </div>
           {success.totalRefunded !== undefined ? (
             <div>
-              <dt className="font-medium text-zinc-500 dark:text-zinc-400">
+              <dt className="font-medium text-muted">
                 Total reembolsado
               </dt>
-              <dd className="text-zinc-900 dark:text-zinc-50">
+              <dd className="text-ink">
                 {String(success.totalRefunded)}
               </dd>
             </div>
           ) : null}
           <div>
-            <dt className="font-medium text-zinc-500 dark:text-zinc-400">Idempotente</dt>
-            <dd className="text-zinc-900 dark:text-zinc-50">
+            <dt className="font-medium text-muted">Idempotente</dt>
+            <dd className="text-ink">
               {success.idempotent ? "Sí" : "No"}
             </dd>
           </div>

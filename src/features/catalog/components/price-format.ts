@@ -2,6 +2,7 @@
 const usdFormatter = new Intl.NumberFormat("es-VE", {
   style: "currency",
   currency: "USD",
+  currencyDisplay: "narrowSymbol",
 });
 
 export function formatUsd(amount: number): string {

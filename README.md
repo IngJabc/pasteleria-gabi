@@ -31,11 +31,13 @@ one fixed 20-minute window in `quote_acceptance_expires_at` and copies it to
 `expires_at`, leaving the historical `initial_expires_at` immutable. Migrations
 004 and 005 have not been applied remotely and the worker is not deployed.
 The public catalog reads active products at request time from the existing
-Supabase tables and renders `/` and `/productos/[slug]`. `/admin` renders the
-local POS cash-sale and refund forms, and `/admin/productos` renders
-session-guarded product CRUD and image management (local, no seed). Two-admin
-auth provisioning and other admin modules remain pending. Other business flows
-remain backend work or placeholders.
+Supabase tables and renders `/` and `/productos/[slug]`. The admin panel has 11
+locally implemented routes behind a fail-closed session gate: `/admin` (Resumen
+dashboard), orders, receipts, external payments, products, inventory, POS,
+cancellations and settings. The storefront and admin UI work is uncommitted,
+with no PR. Two-admin auth provisioning (B2) and final catalog/seed data (B3)
+remain pending; unavailable admin reads show honest empty states. Other business
+flows remain backend work or placeholders.
 The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
@@ -122,7 +124,10 @@ pasteleria-online/
 ├── src/
 │   ├── app/               # Routes only (App Router)
 │   │   ├── (storefront)/  #   customer routes: / and /productos/[slug]
-│   │   └── (admin)/admin/ #   private admin routes: /admin (local POS/refund UI)
+│   │   └── (admin)/admin/ #   11 private admin routes: /admin (Resumen), pedidos
+│   │                      #   (+/[id], /detalle), comprobantes, pagos/externo,
+│   │                      #   productos, inventario, punto-de-venta,
+│   │                      #   cancelaciones, configuracion
 │   ├── components/        # Shared presentational components (no logic)
 │   ├── features/          # One folder per capability (catalog, checkout, …)
 │   ├── domain/            # Framework-free business types and rules

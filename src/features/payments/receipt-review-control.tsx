@@ -79,7 +79,7 @@ export function ReceiptReviewControl({ trackingToken }: { trackingToken: string 
                 rel="noopener noreferrer"
                 className="text-sm font-medium text-blue-700 underline underline-offset-4 dark:text-blue-300"
               >
-                Ver comprobante {index + 1} (se abre en una pestaña nueva)
+                Ver comprobante {index + 1}
               </a>
             </li>
           ))}

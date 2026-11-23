@@ -35,30 +35,49 @@ components. Every folder contains a README with its specific rules.
 
 ```
 src/app/
-├── layout.tsx                 # Root layout: <html lang="es">, fonts, metadata
-├── globals.css                # Tailwind CSS entry
+├── layout.tsx                       # Root layout: <html lang="es">, fonts, metadata
+├── globals.css                      # Tailwind CSS entry + storefront/admin tokens
 ├── favicon.ico
-├── (storefront)/page.tsx      # /            public product list
+├── (storefront)/page.tsx            # /                    public product list
 ├── (storefront)/productos/[slug]/
-│   ├── page.tsx               # /productos/[slug] public product detail
-│   └── not-found.tsx          # Spanish fallback for unknown/inactive slugs
-├── (admin)/admin/page.tsx          # /admin             session-guarded POS/refund panel
-    └── productos/page.tsx          # /admin/productos   session-guarded product CRUD
+│   ├── page.tsx                     # /productos/[slug]    public product detail
+│   └── not-found.tsx                # Spanish fallback for unknown/inactive slugs
+└── (admin)/admin/
+    ├── layout.tsx                   # fail-closed session gate, noindex, instant = false
+    ├── page.tsx                     # /admin               Resumen dashboard
+    ├── pedidos/page.tsx             # /admin/pedidos       orders list
+    ├── pedidos/[id]/page.tsx        # /admin/pedidos/[id]  order detail
+    ├── pedidos/detalle/page.tsx     # /admin/pedidos/detalle  sidebar helper
+    ├── comprobantes/page.tsx        # /admin/comprobantes  receipt review
+    ├── pagos/externo/page.tsx       # /admin/pagos/externo external payment
+    ├── productos/page.tsx           # /admin/productos     product CRUD
+    ├── inventario/page.tsx          # /admin/inventario    inventory
+    ├── punto-de-venta/page.tsx      # /admin/punto-de-venta  POS
+    ├── cancelaciones/page.tsx       # /admin/cancelaciones cancellations
+    └── configuracion/page.tsx       # /admin/configuracion settings
 ```
 
 - The `(storefront)` route group will hold all customer routes:
   catalog, cart, checkout, private order tracking.
 - The `(admin)/admin` segment holds the private panel for the two administrators
-  (SPEC §15). `/admin` now renders the local POS cash-sale and refund forms; the
-  other modules remain planned. The session gate uses the request-bound server
-  client to check `auth.getUser()` and `administrators.is_active`, then fails
-  closed before the catalog read or forms render. It never trusts `user_metadata`.
+  (SPEC §15). All 11 admin routes listed above are implemented locally. The
+  shared `src/app/(admin)/admin/layout.tsx` gate resolves authorization before
+  any frame renders: it uses the request-bound server client to check
+  `auth.getUser()` and `administrators.is_active`, then fails closed. It never
+  trusts `user_metadata`. The layout sets `robots: noindex, nofollow` and
+  `instant = false`, and renders the alerts pill only from real
+  `admin_notifications` rows via `getUnreadAdminNotificationCount()`.
 - The same separation is mirrored in code: customer features and admin modules
   are separate folders under `src/features/`, so an admin-only capability can
-  never be mounted into the storefront by accident.
-- `/admin` and `/admin/productos` are implemented locally with `robots: noindex, nofollow` and
-  `instant = false` so the session check blocks before controls render. Two-admin
-  auth provisioning remains pending (B2). The public catalog pages render active products at request time; cart, checkout and the other admin modules remain unimplemented.
+  never be mounted into the storefront by accident. Admin work lives in
+  `src/features/admin/` (server read/helper layer) and `src/components/admin/`
+  (shell, sidebar and UI primitives). Every server helper gates with
+  `requireActiveAdminId()`; it uses the session client for RLS tables and the
+  service-role client only for `get_product_stock`, returning graceful Spanish
+  `unavailable` results without raw database errors.
+- Two-admin auth provisioning remains pending (B2). Only migration 001 is
+  applied remotely; migrations 002 to 009 are local-only, so many admin reads
+  degrade gracefully against production.
 
 Route map (the Phase column records the original roadmap phase):
 
@@ -68,9 +87,12 @@ Route map (the Phase column records the original roadmap phase):
 | `/productos/[slug]` | Product detail | 1 | Implemented |
 | `/carrito`, `/checkout` | Cart and guest checkout | 3 | Planned |
 | `/seguimiento/[token]` | Private order tracking link | 3 | Implemented in code |
-| `/admin` | Session-guarded POS cash-sale and refund panel | 1 (shell), 5 (full) | Implemented locally |
+| `/admin` | Resumen dashboard | 1 (shell), 5 (full) | Implemented locally |
+| `/admin/pedidos`, `/admin/pedidos/[id]`, `/admin/pedidos/detalle` | Orders list, detail, sidebar helper | 3–5 | Implemented locally |
+| `/admin/comprobantes`, `/admin/pagos/externo` | Receipt review, external cash payment | 5 | Implemented locally |
 | `/admin/productos` | Session-guarded product CRUD and image management | 1 | Implemented locally |
-| `/admin/pedidos`, `/admin/inventario`, `/admin/pagos`, `/admin/ventas`, `/admin/configuracion` | Admin modules | 1–5 | Planned |
+| `/admin/inventario`, `/admin/punto-de-venta` | Inventory, point of sale | 2, 5 | Implemented locally |
+| `/admin/cancelaciones`, `/admin/configuracion` | Cancellations, settings | 3, 6 | Implemented locally |
 
 ## 3. Supabase access
 

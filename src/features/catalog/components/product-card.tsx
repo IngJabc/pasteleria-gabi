@@ -4,54 +4,78 @@ import type { CatalogProduct } from "@/features/catalog/schemas";
 import { formatUsd } from "./price-format";
 
 /**
- * Pure presentational card for one catalog product. The single link in the
- * heading is stretched over the whole card, so the entire card is one native
- * destination without nested interactive controls.
+ * Pure presentational card for one catalog product.
+ *
+ * The pastel background rotates through the design-system swatches so the grid
+ * reproduces the reference without inventing per-product colors. The single
+ * heading link is stretched over the whole card, so the entire card is one
+ * native destination without nested interactive controls.
  */
+
+export const productCardTones = [
+  "bg-rose",
+  "bg-lavender",
+  "bg-mint",
+  "bg-yellow",
+] as const;
+
 export function ProductCard({
   product,
-  isLead = false,
+  available,
+  tone = 0,
 }: {
   product: CatalogProduct;
-  isLead?: boolean;
+  available?: number | null;
+  tone?: number;
 }) {
   const image = product.images[0];
+  const background = productCardTones[tone % productCardTones.length];
 
   return (
-    <li className="group relative flex h-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-colors hover:border-zinc-300 hover:shadow-md focus-within:ring-2 focus-within:ring-zinc-500 focus-within:ring-offset-2 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 dark:focus-within:ring-zinc-400 dark:focus-within:ring-offset-zinc-950">
-      <article className="flex h-full w-full flex-col">
+    <li
+      className={`group relative flex h-full overflow-hidden rounded-card border border-white shadow-sm transition-transform hover:-translate-y-0.5 focus-within:ring-2 focus-within:ring-pink ${background}`}
+    >
+      <article className="flex h-full w-full flex-col p-2">
         {image ? (
           <Image
             src={image.url}
             alt={image.alt}
             width={640}
             height={480}
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-            fetchPriority={isLead ? "high" : undefined}
-            className="aspect-[4/3] h-auto w-full bg-zinc-100 object-cover dark:bg-zinc-900"
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+            className="aspect-[4/3] h-auto w-full rounded-2xl border-2 border-white object-cover"
           />
         ) : (
-          <div className="flex aspect-[4/3] w-full items-center justify-center bg-zinc-100 text-sm text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+          <div className="flex aspect-[4/3] w-full items-center justify-center rounded-2xl border-2 border-white bg-white/60 text-sm font-bold text-muted">
             Sin imagen
           </div>
         )}
 
-        <div className="flex flex-1 flex-col gap-2 p-4">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+        <div className="flex flex-1 flex-col gap-1 px-2 pt-3 pb-2">
+          <h2 className="font-display text-xl font-extrabold text-plum">
             <Link
               href={`/productos/${encodeURIComponent(product.slug)}`}
-              className="after:absolute after:inset-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-700 dark:focus-visible:outline-zinc-300"
+              className="after:absolute after:inset-0 focus-visible:outline-none"
             >
               {product.name}
             </Link>
           </h2>
-          <p className="line-clamp-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
+          <p className="line-clamp-2 text-sm leading-6 text-muted">
             {product.description}
           </p>
-          <p className="mt-auto text-base font-medium text-zinc-900 dark:text-zinc-50">
-            <span className="sr-only">Precio: </span>
-            {formatUsd(product.priceUsd)}
-          </p>
+          <div className="mt-auto flex items-end justify-between gap-2 pt-3">
+            <span className="font-display text-lg font-extrabold text-plum">
+              <span className="sr-only">Precio: </span>
+              {formatUsd(product.priceUsd)}
+            </span>
+            <span className="text-xs font-bold text-muted">
+              {available === null || available === undefined
+                ? "Existencias: —"
+                : available <= 0
+                  ? "Agotado por ahora"
+                  : `${available} disponibles`}
+            </span>
+          </div>
         </div>
       </article>
     </li>

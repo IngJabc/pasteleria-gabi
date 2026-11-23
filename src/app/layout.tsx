@@ -1,35 +1,39 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { DM_Sans, Nunito } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const nunito = Nunito({
+  variable: "--font-nunito",
   subsets: ["latin"],
+  weight: ["500", "700", "800"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  display: "swap",
 });
 
-// Title below is provisional: the commercial brand is still pending definition
-// (see docs/ROADMAP.md — "Pending discovery" in SPEC.md section 18).
+// Brand identity comes from the supplied design-system reference
+// ("Dulce Atelier" — "Un poquito de alegría, en cada bocado.").
 export const metadata: Metadata = {
   title: {
-    default: "Pastelería Online",
-    template: "%s | Pastelería Online",
+    default: "Dulce Atelier",
+    template: "%s | Dulce Atelier",
   },
   description:
-    "Tienda en línea de porciones de torta. Barquisimeto, Venezuela.",
+    "Pequeños antojos. Grandes momentos. Horneado artesanal en Barquisimeto, Venezuela.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="es"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${nunito.variable} ${dmSans.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">{children}</body>
     </html>
   );
 }

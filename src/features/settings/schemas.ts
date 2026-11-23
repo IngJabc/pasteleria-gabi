@@ -1,13 +1,5 @@
 import { z } from "zod";
 
-/**
- * OQ-8 — server-side mirror of the `store_settings.business_hours` JSONB
- * contract defined in `supabase/migrations/009_store_settings_schedule.sql`.
- *
- * Schedules are informational only (SPEC §14): orders are accepted 24/7 and
- * nothing here can block checkout, payment, inventory or reservations.
- */
-
 export const STORE_TIMEZONE = "America/Caracas" as const;
 
 export const WEEKDAYS = [
@@ -37,10 +29,9 @@ export const dayScheduleSchema = z
   .array(timeIntervalSchema)
   .refine(
     (intervals) => intervals.every((interval, index) => index === 0 || interval.start >= intervals[index - 1].end),
-    { message: "Los intervalos de un día no pueden solaparse ni estar desordenados." },
+    { message: "Los intervalos de un día no pueden solaparse ni estar desordenados." }
   );
 
-/** Empty array means a closed day. Overnight intervals are not supported. */
 export type DaySchedule = z.infer<typeof dayScheduleSchema>;
 
 const weekSchema = z.strictObject({
@@ -56,7 +47,6 @@ const weekSchema = z.strictObject({
 export const businessHoursSchema = z.strictObject({
   timezone: z.literal(STORE_TIMEZONE),
   attention: weekSchema,
-  /** Preparation / collection hours. */
   pickup: weekSchema,
 });
 
@@ -67,14 +57,57 @@ export const pickupAddressSchema = z
   .trim()
   .max(500, "La dirección de retiro es demasiado larga.");
 
+const optionalTrimmed = (max: number) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().trim().max(max).optional(),
+  );
+
+/** Admin-configured payment destination details. No real data is invented;
+ * fields are optional and only stored values are shown to customers. */
+export const paymentMethodInstructionSchema = z.strictObject({
+  enabled: z.boolean().optional(),
+  label: optionalTrimmed(120),
+  account: optionalTrimmed(300),
+  holder: optionalTrimmed(200),
+  bank: optionalTrimmed(200),
+  phone: optionalTrimmed(50),
+  document: optionalTrimmed(50),
+  email: optionalTrimmed(200),
+  network: optionalTrimmed(120),
+  note: optionalTrimmed(500),
+});
+
+export type PaymentMethodInstruction = z.infer<typeof paymentMethodInstructionSchema>;
+
+export const paymentInstructionsSchema = z
+  .strictObject({
+    pago_movil: paymentMethodInstructionSchema.optional(),
+    cash_usd: paymentMethodInstructionSchema.optional(),
+    binance_pay: paymentMethodInstructionSchema.optional(),
+    binance_transfer: paymentMethodInstructionSchema.optional(),
+  })
+  .strict();
+
+export type PaymentInstructions = z.infer<typeof paymentInstructionsSchema>;
+
 export const updateStoreSettingsSchema = z
   .strictObject({
     pickupAddress: pickupAddressSchema.nullable().optional(),
+    whatsappPhone: z.string().trim().max(50).nullable().optional(),
     businessHours: businessHoursSchema.nullable().optional(),
+    paymentInstructions: paymentInstructionsSchema.nullable().optional(),
   })
-  .refine((input) => input.pickupAddress !== undefined || input.businessHours !== undefined, {
-    message: "Debe enviarse al menos un campo de configuración.",
-  });
+  .refine(
+    (input) =>
+      input.pickupAddress !== undefined ||
+      input.whatsappPhone !== undefined ||
+      input.businessHours !== undefined ||
+      input.paymentInstructions !== undefined,
+    {
+      message: "Debe enviarse al menos un campo de configuración.",
+    },
+  );
 
 export type UpdateStoreSettingsInput = z.infer<typeof updateStoreSettingsSchema>;
 

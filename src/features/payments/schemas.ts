@@ -82,6 +82,12 @@ export const trackedOrderSchema = z
   .object({
     order_id: z.number().int().positive(),
     status: z.string().min(1),
+    fulfillment_type: z.string().min(1).optional(),
+    subtotal_usd: z.coerce.number().nonnegative().optional(),
+    delivery_fee_usd: z.coerce.number().nullable().optional(),
+    total_usd: z.coerce.number().nonnegative().optional(),
+    quote_accepted_at: z.string().nullable().optional(),
+    delivery_requires_quote: z.boolean().optional(),
   })
   .nullable();
 
@@ -135,6 +141,10 @@ export const posItemSchema = z.object({
 
 /** Database messages are mapped to stable Spanish text; SQL never leaks. */
 export function paymentsPublicError(message: string, fallback: string): string {
+  return paymentsPublicErrorMapped(message) ?? fallback;
+}
+
+function paymentsPublicErrorMapped(message: string): string | null {
   if (message.includes("no order matches the tracking token")) {
     return "El enlace de seguimiento no es válido.";
   }
@@ -151,6 +161,12 @@ export function paymentsPublicError(message: string, fallback: string): string {
   }
   if (message.includes("correction window") && message.includes("closed")) {
     return "El plazo para corregir el comprobante ya venció.";
+  }
+  if (message.includes("delivery quote is pending")) {
+    return "El delivery de este pedido a?n est? pendiente por cotizar.";
+  }
+  if (message.includes("delivery quote must be accepted")) {
+    return "Debes aceptar la cotizaci?n de delivery antes de registrar el pago.";
   }
   if (message.includes("is canceled") || message.includes("is expired")) {
     return "El pedido ya no admite pagos.";
@@ -170,7 +186,7 @@ export function paymentsPublicError(message: string, fallback: string): string {
   if (message.includes("does not exist") || message.includes("does not require a receipt")) {
     return "La operación de pago ya no está disponible.";
   }
-  return fallback;
+  return null;
 }
 
 export const invalidPaymentInputError = "Revisa los datos del pago e inténtalo de nuevo.";

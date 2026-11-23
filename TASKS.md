@@ -875,3 +875,68 @@ and `npm run build` (passed). Independent final audit: PASS with no remaining
 findings. One pre-existing 15-minute-bucket concurrency test failed once during
 a parallel run; its focused and full serial reruns passed. `git diff --check`
 was clean.
+
+
+---
+
+## Frontend UX/UI — Storefront implementation (in progress, local)
+
+Branch: `features/frontend-ux-ui` (from `4f3849ac80adf7435a7c7aa2865c54ddfe4313bf`, PR #15 merge). No commit, push, merge, remote migration, deployment, or secret change performed.
+
+- [x] Inspected repository, routes, backend capabilities, and read all 19 provided PNG references (Design System + 9 desktop + 9 mobile storefront screens). No admin design references were provided; admin UI redesign is blocked pending admin PNGs.
+- [x] Extracted sampled design-system starting tokens from the supplied Design System PNG and documented them in `src/app/globals.css` (brand identity “Dulce Atelier”, Nunito + DM Sans, color/spacing/radius/shadow/focus/reduced-motion rules). Values are sampled starting points; uncertain visual details should be confirmed against final design assets.
+- [x] Implemented shared storefront UI primitives and layout: `src/components/ui/ui.tsx`, `src/components/ui/icons.tsx`, `src/components/layout/*`, and `src/app/(storefront)/layout.tsx` with `CartProvider`.
+- [x] Implemented local cart state in `src/features/cart/cart-context.tsx` using `localStorage` + `useSyncExternalStore`. Cart stores product identity/quantity only; it has no price or inventory authority. Server paths revalidate prices, stock, and order creation through existing backend capabilities.
+- [x] Implemented storefront routes/screens faithful to supplied references where data/capabilities exist: `/`, `/productos`, `/productos/[slug]`, `/carrito`, `/checkout/entrega`, `/checkout/pago`, `/seguimiento`, `/seguimiento/[token]`.
+- [x] Wired storefront to existing backend capabilities without mock substitutions: public catalog queries, `get_product_stock` via service-role read path, active delivery zones/store settings, `create_online_order_with_bcv`, `registerDigitalPaymentWithReceipt`, `getPaymentSummaryForTracking`, `getCurrentBcvRate`, `acceptQuoteFeeForTracking`, `request_order_cancellation`, and token-authorized receipt review.
+- [x] Checkout/payment security boundary: tracking token is stored only in an `httpOnly` short-lived cookie during payment handoff and never exposed in URL or client-readable field. Successful payment clears the cookie and redirects to the private tracking link.
+- [x] Catalog category tabs are rendered as designed; non-“Todas” tabs show an honest empty state because the schema has no category field. No category schema/business data was invented.
+- [x] `trackedOrderSchema` was extended with optional quote fields already exposed by `get_order_for_tracking`; compatibility preserved. `create_online_order_with_bcv` has a narrow `as unknown as ...` cast only at the RPC boundary because generated DB types model nullable pickup/instructions fields as non-null; SQL/runtime behavior accepts nulls. No migration/remote DB change.
+
+Blocked / not invented:
+
+- [ ] **Admin interface redesign/implementation** — blocked at that point pending admin PNG design references from the user. Existing admin behavior remains intact. **Later status:** the 10 admin PNG references were received and the admin UI was implemented locally on the same branch; see the Admin UX/UI section below.
+- [ ] **B2** — administrator emails/Auth provisioning remains an external business dependency; no admin accounts/credentials invented.
+- [ ] **B3** — final catalog/seed/photographs/business content remain external dependencies; realistic empty states used where unavailable.
+
+Validation (local, 2026-11-22):
+
+- `npm.cmd run typecheck` — PASS.
+- `npm.cmd run lint` — PASS (0 errors, 2 pre-existing warnings in `src/infrastructure/database/quote-acceptance-migration.test.ts`).
+- `npm.cmd run build` — PASS (Next 16.4.6 Turbopack; routes compiled/prerendered as expected).
+- `npm.cmd run test` — PASS (29 files, 331 tests).
+
+Protected files preserved unchanged (not staged/committed): `package.json`, `package-lock.json`, `supabase/.temp/cli-latest`, `supabase/.gitignore`, `supabase/config.toml`.
+
+---
+
+## Frontend UX/UI — Admin implementation (in progress, local)
+
+Branch: `features/frontend-ux-ui` (from `4f3849ac80adf7435a7c7aa2865c54ddfe4313bf`, PR #15 merge; `origin/main` unchanged). The work remains UNCOMMITTED. No commit, push, merge, remote migration, deployment, secret change or PR was made.
+
+- [x] Received 10 unique admin PNG mockups (delivered twice) and treated them as the visual source of truth: sidebar "dulce atelier" with 10 nav items, topbar "EL ATELIER / ADMIN" with alerts pill and neutral user chip, cream rounded content panel, pastel stat cards, white surfaces, status chips, semantic tables, receipt/dropzone-styled forms and a neutral footer. The blocker that held the admin phase is cleared.
+- [x] Did not hardcode fictional mockup values (María R., DA-1042, Bs. 50,00, bank details, "3 alertas nuevas", product names/prices). Real backend data and honest unavailable/empty states are used instead. The topbar alerts count comes from real `admin_notifications` rows through `getUnreadAdminNotificationCount()` and is omitted when unavailable or zero.
+- [x] Implemented 11 admin routes: `/admin` (Resumen dashboard), `/admin/pedidos`, `/admin/pedidos/[id]`, `/admin/pedidos/detalle` (sidebar helper: "select an order"), `/admin/comprobantes`, `/admin/pagos/externo`, `/admin/productos` (existing CRUD restyled), `/admin/inventario`, `/admin/punto-de-venta`, `/admin/cancelaciones` and `/admin/configuracion`.
+- [x] Added a shared admin foundation: `src/components/admin/admin-shell.tsx` (`AdminShell`, `AdminAccessMessage`, `AdminFooterNote`), `admin-sidebar.tsx` (client nav with `usePathname`, `aria-current`, one nav landmark), `admin-ui.tsx` (`AdminPageHeader`, `AdminStatCard`, `AdminSurface`, `AdminBanner`, `AdminStatusChip`, `AdminEmptyState`, `AdminTable`, `AdminSectionTitle`), `src/app/(admin)/admin/layout.tsx` (fail-closed gate, `instant = false`, `noindex`, real alert count), additive `admin-*` CSS in `src/app/globals.css` and 14 admin SVG icons in `src/components/ui/icons.tsx`.
+- [x] Added a server data layer in `src/features/admin/`: `format.ts`, `overview.ts`, `orders.ts`, `notifications.ts`, `cancellations.ts`, `receipts.ts`, `inventory.ts`, `settings-read.ts` and `refunds-read.ts`. Every helper gates with `requireActiveAdminId()`; it uses the session client for RLS tables and the service-role client only for `get_product_stock`, returns graceful `unavailable` results with fixed Spanish messages and never exposes raw database errors.
+- [x] Added client components: `src/features/admin/components/payments/` (`receipt-decision`, `external-payment-form`, `payment-display`, with tests) and `src/features/admin/components/ops/` (`inventory-actions`, `business-hours`, with a test).
+- [x] Wired real backend capabilities: receipt approve/reject reuses `reviewPayment`; external cash payment reuses `registerCashPayment`; inventory create/adjust wraps the existing `create_inventory_batch`/`adjust_inventory` RPCs through the session client with no admin id from the client; POS reuses `registerPosCashSale`; refunds reuse `recordPaymentRefund`; products reuse existing CRUD actions; settings reads real zones/settings/BCV. Receipt images use 300-second server-minted signed URLs (`RECEIPT_REVIEW_URL_LIFETIME_SECONDS`); the receipt path never crosses to the client.
+- [x] Used honest unavailable states, with no fake or mock data: admin orders list, dashboard KPI reads, receipt pending queue read, admin cancellation approval (no RPC/business rule), Binance/external digital payments with receipt in admin, combined POS payments, delivery-zone CRUD, payment-method toggles, reserve policy, admin-team CRUD, settings editing and notification mark-as-read (wired but not exposed as a control). Inventory reservation expiry dates are unavailable in the read model.
+- [x] Security review found no confirmed findings: gate on every helper, correct RLS/service-role split, receipt path validation that prevents traversal and bucket switching, 300-second signed URLs, no PII/error leakage, bounded inputs, no fabricated alert count, fail-closed layout, no hardcoded fictional data and no cross-request mutable state. One cosmetic issue (a VES refund shown with `$`) was fixed by formatting non-USD refunds with the currency code.
+
+Blocked / not invented:
+
+- [ ] **B2** — administrator emails/Auth provisioning remains an external business dependency; no admin accounts/credentials invented.
+- [ ] **B3** — final catalog/seed/photographs/business content remain external dependencies; realistic empty states used where unavailable.
+
+Scope note: only migration 001 is applied remotely; migrations 002 to 009 are local-only, so many admin reads degrade gracefully against production. No remote migration or deploy was performed.
+
+Validation (local, 2026-11-22, run by the orchestrator after the final edits):
+
+- `npm.cmd run typecheck` — PASS.
+- `npm.cmd run lint` — PASS (0 errors, 2 pre-existing warnings in `src/infrastructure/database/quote-acceptance-migration.test.ts`).
+- `npm.cmd run build` — PASS (Next 16.4.6 Turbopack, 22 pages; 11 admin routes dynamic).
+- `npm.cmd run test` — PASS (32 files, 341 tests; previously 29 files / 331 tests, so +3 files / +10 tests).
+- `git diff --check` — clean (only cosmetic LF to CRLF notices).
+
+No commit, push, merge or PR was created for this phase.

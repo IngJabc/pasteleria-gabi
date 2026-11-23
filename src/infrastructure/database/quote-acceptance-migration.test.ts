@@ -31,6 +31,13 @@ const MIGRATIONS = [
   path.join(repoRoot, "supabase", "migrations", "003_orders_and_reservations.sql"),
   path.join(repoRoot, "supabase", "migrations", "004_quote_acceptance.sql"),
   path.join(repoRoot, "supabase", "migrations", "005_receipt_sla_notifications.sql"),
+  path.join(repoRoot, "supabase", "migrations", "006_payments_and_verification.sql"),
+  path.join(repoRoot, "supabase", "migrations", "007_bcv_rates_and_rounding.sql"),
+  path.join(repoRoot, "supabase", "migrations", "008_realtime_publication.sql"),
+  path.join(repoRoot, "supabase", "migrations", "009_store_settings_schedule.sql"),
+  path.join(repoRoot, "supabase", "migrations", "010_delivery_quote_admin.sql"),
+  path.join(repoRoot, "supabase", "migrations", "011_quote_pending_payment_guard.sql"),
+  path.join(repoRoot, "supabase", "migrations", "012_delivery_quote_post_acceptance_guard.sql"),
 ];
 
 const ADMIN = "11111111-1111-4111-8111-111111111111";
@@ -305,8 +312,14 @@ describe.skipIf(!tools)("OQ-17 quote acceptance migration on a disposable local 
 
   it("rejects acceptance after a receipt has been submitted", async () => {
     const order = await quotedOrder();
-    const held = await asService(`select public.hold_order_reservations(${order.id});`);
-    expect(held.stdout.trim()).toBe("1");
+    const receipt = await asService(
+      `update public.orders set receipt_attempts = 1 where id = ${order.id};\n` +
+        `update public.inventory_reservations\n` +
+        `set correction_window_ends_at = now() + interval '20 minutes',\n` +
+        `    expires_at = now() + interval '20 minutes'\n` +
+        `where order_id = ${order.id} and status = 'active';`,
+    );
+    expect(receipt.code, allText(receipt)).toBe(0);
 
     const result = await acceptByToken(order.token);
     expect(result.code).not.toBe(0);
@@ -553,6 +566,62 @@ describe.skipIf(!tools)("OQ-17 quote acceptance migration on a disposable local 
       `select status from public.inventory_reservations where order_id = ${order.id};`,
     )).toBe("expired");
     expect(await auditCount(order.id)).toBe(1);
+  });
+
+
+  it("rejects a different admin quote after customer acceptance and keeps state unchanged", async () => {
+    const order = await quotedOrder();
+    const accepted = parsed(await acceptByToken(order.token));
+    const beforeReservations = await asService(
+      `select status, expires_at, quote_acceptance_expires_at, initial_expires_at, correction_window_ends_at\n` +
+        `from public.inventory_reservations where order_id = ${order.id} order by id;`,
+    );
+    expect(beforeReservations.code, allText(beforeReservations)).toBe(0);
+    const auditBefore = await scalar(`select count(*) from public.audit_log where entity_type='order' and entity_id='${order.id}' and action='order.set_delivery_quote';`);
+
+    const changed = await asService(
+      `select public.admin_set_delivery_quote(${order.id}, 9.99, '${ADMIN}'::uuid);`,
+    );
+    expect(changed.code).not.toBe(0);
+    expect(allText(changed)).toContain("cannot change quote after customer acceptance");
+
+    const afterOrder = await asService(
+      `select delivery_fee_usd, total_usd, quote_accepted_at\n` +
+        `from public.orders where id = ${order.id};`,
+    );
+    expect(afterOrder.code, allText(afterOrder)).toBe(0);
+    expect(lastLine(afterOrder.stdout)).toContain("7.50|17.50|");
+    const dbQuoteAcceptedAt = lastLine(afterOrder.stdout).split("|")[2] ?? "";
+    expect(dbQuoteAcceptedAt.replace(" ", "T").slice(0, 19)).toBe(
+      accepted.quote_accepted_at.replace(" ", "T").slice(0, 19),
+    );
+
+    const afterReservations = await asService(
+      `select status, expires_at, quote_acceptance_expires_at, initial_expires_at, correction_window_ends_at\n` +
+        `from public.inventory_reservations where order_id = ${order.id} order by id;`,
+    );
+    expect(lines(afterReservations.stdout)).toEqual(lines(beforeReservations.stdout));
+    const auditAfter = await scalar(`select count(*) from public.audit_log where entity_type='order' and entity_id='${order.id}' and action='order.set_delivery_quote';`);
+    expect(auditAfter).toBe(auditBefore);
+  });
+
+  it("allows an identical post-acceptance quote retry as idempotent with no writes", async () => {
+    const order = await quotedOrder();
+    parsed(await acceptByToken(order.token));
+    const auditBefore = await scalar(`select count(*) from public.audit_log where entity_type='order' and entity_id='${order.id}' and action='order.set_delivery_quote';`);
+    const beforeReservations = await asService(`select status, expires_at, quote_acceptance_expires_at from public.inventory_reservations where order_id=${order.id} order by id;`);
+
+    const retry = await asService(`select public.admin_set_delivery_quote(${order.id}, 7.50, '${ADMIN}'::uuid);`);
+    expect(retry.code, allText(retry)).toBe(0);
+    const payload = JSON.parse(lastLine(retry.stdout)) as Record<string, unknown>;
+    expect(payload.idempotent).toBe(true);
+    expect(Number(payload.delivery_fee_usd)).toBe(7.5);
+    expect(Number(payload.total_usd)).toBe(17.5);
+
+    const auditAfter = await scalar(`select count(*) from public.audit_log where entity_type='order' and entity_id='${order.id}' and action='order.set_delivery_quote';`);
+    expect(auditAfter).toBe(auditBefore);
+    const afterReservations = await asService(`select status, expires_at, quote_acceptance_expires_at from public.inventory_reservations where order_id=${order.id} order by id;`);
+    expect(lines(afterReservations.stdout)).toEqual(lines(beforeReservations.stdout));
   });
 
   // --- F. Authorization and observability -------------------------------------

@@ -1,21 +1,28 @@
 import type { CatalogProduct } from "@/features/catalog/schemas";
+import type { PublicStockMap } from "../public-data";
 import { ProductCard } from "./product-card";
 
 /** Responsive catalog grid with a graceful empty state. */
-export function ProductGrid({ products }: { products: CatalogProduct[] }) {
+export function ProductGrid({
+  products,
+  stock,
+}: {
+  products: CatalogProduct[];
+  stock?: PublicStockMap;
+}) {
   if (products.length === 0) {
     return (
       <section
         aria-labelledby="catalog-empty-heading"
-        className="rounded-xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-950"
+        className="rounded-card border border-white bg-white p-10 text-center shadow-sm"
       >
         <h2
           id="catalog-empty-heading"
-          className="text-xl font-semibold text-zinc-900 dark:text-zinc-50"
+          className="font-display text-2xl font-extrabold text-plum"
         >
-          Sin productos disponibles
+          Aún no hay productos disponibles
         </h2>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-muted">
           Vuelve pronto para conocer nuestro catálogo.
         </p>
       </section>
@@ -23,12 +30,13 @@ export function ProductGrid({ products }: { products: CatalogProduct[] }) {
   }
 
   return (
-    <ul className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
       {products.map((product, index) => (
         <ProductCard
           key={product.id}
           product={product}
-          isLead={index === 0}
+          available={stock?.[product.id] ?? null}
+          tone={index}
         />
       ))}
     </ul>
@@ -40,19 +48,19 @@ export function ProductGridSkeleton() {
   return (
     <div
       aria-busy="true"
-      className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3"
+      className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4"
     >
       <p className="sr-only">Cargando productos…</p>
-      {[0, 1, 2].map((slot) => (
+      {[0, 1, 2, 3].map((slot) => (
         <div
           key={slot}
           aria-hidden="true"
-          className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+          className="overflow-hidden rounded-card border border-white bg-white shadow-sm"
         >
-          <div className="aspect-[4/3] w-full bg-zinc-100 dark:bg-zinc-900" />
+          <div className="aspect-[4/3] w-full bg-lavender/60" />
           <div className="space-y-3 p-4">
-            <div className="h-5 w-2/3 rounded bg-zinc-100 dark:bg-zinc-900" />
-            <div className="h-4 w-full rounded bg-zinc-100 dark:bg-zinc-900" />
+            <div className="h-5 w-2/3 rounded bg-lavender/60" />
+            <div className="h-4 w-full rounded bg-rose/70" />
           </div>
         </div>
       ))}

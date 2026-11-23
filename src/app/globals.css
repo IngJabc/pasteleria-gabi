@@ -1,26 +1,494 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Dulce Atelier design tokens.
+ *
+ * Palette and type scale are extracted from the supplied design-system
+ * reference (`Dulce Atelier` / "Un poquito de alegría, en cada bocado.").
+ * Named swatches: ink, muted, pink, rose, coral, yellow, lavender, mint,
+ * cream, white. Display type is Nunito ExtraBold; body type is DM Sans.
+ * Radii: 12 fields, 24 cards, 32 sections; buttons are pills.
+ *
+ * The reference image names the swatches but does not print hex values, so the
+ * hex values below are sampled from the reference artwork. They are the
+ * authoritative starting point for this implementation; if the owner supplies
+ * exact brand values, update them here only.
+ */
+
+@theme {
+  /* Color swatches */
+  --color-cream: #fff8fc;
+  --color-white: #ffffff;
+  --color-ink: #66415f;
+  --color-muted: #81677d;
+  --color-plum: #934373;
+  --color-pink: #a13670;
+  --color-pink-soft: #f7bed8;
+  --color-pink-shadow: #f5dae8;
+  --color-rose: #ffe8f1;
+  --color-coral: #ffd7d1;
+  --color-yellow: #fff0b8;
+  --color-lavender: #eae0fc;
+  --color-lavender-shadow: #dccdf3;
+  --color-mint: #d4f2e8;
+  --color-sky: #ddeffd;
+
+  /* Typography */
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-display: var(--font-nunito), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+
+  /* Radii (design system: 12 fields, 24 cards, 32 sections) */
+  --radius-field: 12px;
+  --radius-card: 24px;
+  --radius-section: 32px;
+
+  /* Sticker-style raised shadow used by primary buttons */
+  --shadow-sticker: 0 6px 0 0 var(--color-pink-shadow);
+  --shadow-sticker-secondary: 0 6px 0 0 var(--color-lavender-shadow);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background-color: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    color: var(--color-plum);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+
+  /* One consistent, visible keyboard focus style across the app. */
+  :focus-visible {
+    outline: 3px solid var(--color-pink);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Respect users who prefer reduced motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@utility container-page {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 72rem;
+  padding-inline: 1.5rem;
+}
+
+@utility text-eyebrow {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-pink);
+}
+
+/*
+ * Admin panel foundation. These classes are additive: they only style
+ * `admin-*` hooks and never override the storefront tokens or rules above.
+ */
+
+.admin-shell {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  min-block-size: 100vh;
+}
+
+.admin-skip-link {
+  position: fixed;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0.5rem;
+  z-index: 50;
+  transform: translateY(-200%);
+  border-radius: 9999px;
+  background: var(--color-plum);
+  padding: 0.75rem 1.25rem;
+  color: var(--color-white);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 800;
+  transition: transform 150ms ease;
+}
+
+.admin-skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+.admin-sidebar {
+  position: sticky;
+  inset-block-start: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  block-size: 100vh;
+  overflow: auto;
+  background: var(--color-white);
+  border-inline-end: 1px solid var(--color-rose);
+  padding: 1.5rem 1rem;
+}
+
+.admin-nav {
+  min-inline-size: 0;
+}
+
+.admin-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-nav-link {
+  display: flex;
+  min-block-size: 2.75rem;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 9999px;
+  padding: 0.5rem 0.875rem;
+  box-shadow: inset 3px 0 0 transparent;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.25;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.admin-nav-link:hover {
+  background: var(--color-rose);
+}
+
+/* Shape + weight reinforce the state; aria-current is the source of truth. */
+.admin-nav-link[aria-current="page"] {
+  background: var(--color-pink-soft);
+  box-shadow: inset 3px 0 0 var(--color-plum);
+  color: var(--color-plum);
+  font-weight: 800;
+}
+
+.admin-sidebar-bottom {
+  display: grid;
+  gap: 0.75rem;
+  margin-block-start: auto;
+}
+
+.admin-store-link {
+  display: inline-flex;
+  min-block-size: 2.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.5rem 1rem;
+  color: var(--color-pink);
+  font-family: var(--font-display);
+  font-size: 0.9375rem;
+  font-weight: 800;
+  transition: background-color 150ms ease;
+}
+
+.admin-store-link:hover {
+  background: var(--color-rose);
+}
+
+.admin-content {
+  min-inline-size: 0;
+}
+
+.admin-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.admin-topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.admin-alerts-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  background: var(--color-yellow);
+  padding: 0.5rem 0.875rem;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-weight: 800;
+}
+
+.admin-user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  border: 1px solid var(--color-rose);
+  border-radius: 9999px;
+  background: var(--color-white);
+  padding: 0.25rem 0.875rem 0.25rem 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.admin-user-avatar {
+  display: grid;
+  inline-size: 2rem;
+  block-size: 2rem;
+  place-items: center;
+  border-radius: 9999px;
+  background: var(--color-lavender);
+  color: var(--color-plum);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.admin-panel {
+  display: flex;
+  min-block-size: calc(100vh - 5rem);
+  flex-direction: column;
+  border: 1px solid var(--color-rose);
+  border-block-start: 3px solid var(--color-pink-soft);
+  border-start-start-radius: var(--radius-section);
+  border-start-end-radius: var(--radius-section);
+  background: var(--color-cream);
+  padding: 1.5rem;
+}
+
+.admin-main {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.admin-footer {
+  margin-block-start: 2rem;
+  border-block-start: 1px solid var(--color-rose);
+  padding-block-start: 1rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+/* The query container must be an ancestor of the elements it styles. */
+.admin-table-container {
+  container-type: inline-size;
+}
+
+.admin-table-scroll {
+  max-inline-size: 100%;
+  max-block-size: min(32rem, 80vh);
+  overflow: auto;
+  border-radius: var(--radius-field);
+}
+
+.admin-table {
+  inline-size: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.admin-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  border-block-end: 1px solid var(--color-rose);
+  background: var(--color-white);
+  padding: 0.75rem;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.admin-table tbody th,
+.admin-table tbody td {
+  border-block-end: 1px solid var(--color-rose);
+  padding: 0.875rem 0.75rem;
+  text-align: start;
+  vertical-align: top;
+}
+
+.admin-table tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background: var(--color-white);
+}
+
+.admin-table tbody tr:last-child th,
+.admin-table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+/* Adapt to the table's own width, so a narrow widget stacks like a phone. */
+@container (width < 36rem) {
+  .admin-table-scroll {
+    max-block-size: none;
+    overflow: visible;
+  }
+
+  .admin-table,
+  .admin-table thead,
+  .admin-table tbody,
+  .admin-table tr,
+  .admin-table th,
+  .admin-table td {
+    display: block;
+    inline-size: auto;
+  }
+
+  .admin-table thead {
+    display: none;
+  }
+
+  .admin-table tbody tr {
+    margin-block-end: 1rem;
+    border: 1px solid var(--color-rose);
+    border-radius: var(--radius-field);
+    background: var(--color-white);
+    padding: 0.5rem 0.75rem;
+  }
+
+  .admin-table tbody th {
+    position: static;
+    background: transparent;
+    padding-block: 0.5rem;
+    color: var(--color-plum);
+  }
+
+  .admin-table tbody td {
+    border: 0;
+    padding-block: 0.375rem;
+  }
+
+  /* Labels come from the `headers` prop; no extra markup is needed in cells. */
+  .admin-table tbody td::before {
+    display: block;
+    color: var(--color-muted);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .admin-table tbody td:nth-child(1)::before {
+    content: var(--admin-col-1, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(2)::before {
+    content: var(--admin-col-2, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(3)::before {
+    content: var(--admin-col-3, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(4)::before {
+    content: var(--admin-col-4, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(5)::before {
+    content: var(--admin-col-5, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(6)::before {
+    content: var(--admin-col-6, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(7)::before {
+    content: var(--admin-col-7, "") ": ";
+  }
+
+  .admin-table tbody td:nth-child(8)::before {
+    content: var(--admin-col-8, "") ": ";
+  }
+}
+
+@media (width < 64rem) {
+  .admin-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-sidebar {
+    position: static;
+    block-size: auto;
+    gap: 0.75rem;
+    overflow: visible;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--color-rose);
+    padding: 1rem;
+  }
+
+  .admin-nav-list {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-block-end: 0.5rem;
+  }
+
+  .admin-nav-list > li {
+    flex: 0 0 auto;
+  }
+
+  .admin-sidebar-bottom {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    margin-block-start: 0;
+  }
+
+  .admin-topbar {
+    padding: 1rem;
+  }
+
+  .admin-panel {
+    border-radius: var(--radius-card);
+    padding: 1rem;
+  }
+}
+/* Admin login/logout controls reuse admin tokens and do not alter storefront. */
+.admin-user-chip {
+  cursor: pointer;
+}
+
+.admin-user-chip:hover {
+  background: var(--color-rose);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

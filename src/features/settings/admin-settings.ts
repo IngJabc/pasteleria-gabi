@@ -46,8 +46,15 @@ export async function updateStoreSettings(input: UpdateStoreSettingsInput): Prom
   if (parsed.data.pickupAddress !== undefined) {
     patch.pickup_address = parsed.data.pickupAddress;
   }
+  if (parsed.data.whatsappPhone !== undefined) {
+    const trimmed = parsed.data.whatsappPhone?.trim() ?? null;
+    patch.whatsapp_phone = trimmed === "" ? null : trimmed;
+  }
   if (parsed.data.businessHours !== undefined) {
     patch.business_hours = parsed.data.businessHours;
+  }
+  if (parsed.data.paymentInstructions !== undefined) {
+    patch.payment_instructions = parsed.data.paymentInstructions as StoreSettingsUpdate["payment_instructions"];
   }
 
   const { data, error } = await (await createSupabaseServerClient())

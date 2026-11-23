@@ -43,6 +43,10 @@ describe("migration 006 contract (static)", () => {
       "007_bcv_rates_and_rounding.sql",
       "008_realtime_publication.sql",
       "009_store_settings_schedule.sql",
+      "010_delivery_quote_admin.sql",
+      "011_quote_pending_payment_guard.sql",
+      "012_delivery_quote_post_acceptance_guard.sql",
+      "013_quote_guard_helpers_grants.sql",
     ]);
   });
 

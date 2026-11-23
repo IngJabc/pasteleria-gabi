@@ -167,8 +167,8 @@ describe("getReceiptUrlsForTracking server action", () => {
     },
   );
 
-  it.each(["approved", "rejected"])(
-    "allows receipt re-view after payment %s",
+  it.each(["approved", "rejected", "pending", "in_review"])(
+    "allows receipt re-view when a submitted payment is %s",
     async (status) => {
       paymentsOrder.mockResolvedValueOnce({
         data: [{ id: 9, receipt_path: originalPath, status }],
@@ -239,7 +239,7 @@ describe("getReceiptUrlsForTracking server action", () => {
     expect(createSignedUrl).not.toHaveBeenCalled();
   });
 
-  it("rejects payments that are only pending or in review", async () => {
+  it("allows receipt re-view for submitted payments still pending or in review", async () => {
     paymentsOrder.mockResolvedValueOnce({
       data: [
         { id: 7, receipt_path: originalPath, status: "pending" },
@@ -250,8 +250,11 @@ describe("getReceiptUrlsForTracking server action", () => {
 
     const result = await getReceiptUrlsForTracking({ trackingToken: token });
 
-    expect(result).toEqual({ ok: false, error: receiptReviewUnavailableError });
-    expect(createSignedUrl).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: true,
+      urls: [signedUrlFor(originalPath), signedUrlFor(correctionPath)],
+    });
+    expect(createSignedUrl).toHaveBeenCalledTimes(2);
   });
 
   it("returns a generic error and no SQL details when token resolution fails", async () => {

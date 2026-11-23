@@ -81,6 +81,33 @@ export async function registerDigitalPaymentWithReceipt(input: {
   if (!["pending", "confirmed"].includes(order.data.status)) {
     return { ok: false, error: "El pedido ya no admite pagos." };
   }
+  if (order.data.delivery_requires_quote === true && order.data.delivery_fee_usd === null) {
+    return {
+      ok: false,
+      error: "El delivery de este pedido aún está pendiente por cotizar.",
+    };
+  }
+  if (
+    order.data.delivery_requires_quote === true &&
+    order.data.delivery_fee_usd !== null &&
+    !order.data.quote_accepted_at
+  ) {
+    return {
+      ok: false,
+      error: "Debes aceptar la cotización de delivery antes de registrar el pago.",
+    };
+  }
+  const expectedTotal = Number(order.data.total_usd);
+  const amountValue = Number(amount);
+  if (Number.isFinite(expectedTotal) && Number.isFinite(amountValue) && method !== "pago_movil") {
+    // USD/USDT are 1:1 in this system; VES is validated separately by BCV snapshot rules.
+    if (Math.abs(amountValue - expectedTotal) > 0.01) {
+      return {
+        ok: false,
+        error: "El monto debe coincidir con el total final del pedido.",
+      };
+    }
+  }
 
   const path = `${order.data.order_id}/${randomUUID()}.${extension}`;
   let bytes: ArrayBuffer;

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 /** Storefront footer with the atelier identity and service information. */
 export function SiteFooter() {
   return (
@@ -14,6 +16,9 @@ export function SiteFooter() {
         <div className="text-sm leading-6 text-ink">
           <p>Barquisimeto, Venezuela</p>
           <p>Mar–Dom · 9:00 a. m. – 6:00 p. m.</p>
+          <Link href="/#dejar-resena" className="mt-2 inline-block font-display font-bold text-pink hover:underline">
+            Dejar una reseña
+          </Link>
         </div>
         <p className="text-sm text-muted md:col-span-2">
           Ingredientes honestos / Hecho a mano / Mucho amor

@@ -38,5 +38,8 @@ export function parsePublicEnv(input: unknown): PublicEnv {
 
 /** Reads and validates public environment variables from `process.env`. */
 export function getPublicEnv(): PublicEnv {
-  return parsePublicEnv(process.env);
+  return parsePublicEnv({
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  });
 }

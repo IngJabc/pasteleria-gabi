@@ -277,6 +277,22 @@ export function BoxIcon({ className = "size-5" }: IconProps) {
   );
 }
 
+
+export function StarIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M12 3.5 14.9 9l6 .5-4.6 3.9 1.4 5.8L12 16.1 6.3 19.2l1.4-5.8L3 9.5 9 9l3-5.5Z" />
+    </svg>
+  );
+}
+
+export function ChevronDownIcon({ className = "size-5" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
 export function StoreIcon({ className = "size-5" }: IconProps) {
   return (
     <svg

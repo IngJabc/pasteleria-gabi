@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCart } from "../cart-context";
@@ -8,6 +9,7 @@ import type { DeliveryZone } from "@/features/catalog/public-data";
 import { formatUsd } from "@/features/catalog/components/price-format";
 import { Button } from "@/components/ui/ui";
 import { ArrowRightIcon, MinusIcon, PlusIcon, TrashIcon } from "@/components/ui/icons";
+import { ImageModal } from "@/components/ui/image-modal";
 
 export function CheckoutSteps({ current = 1 }: { current?: 1 | 2 | 3 }) {
   const step = (index: 1 | 2 | 3, label: string) => (
@@ -39,6 +41,7 @@ export function CheckoutSteps({ current = 1 }: { current?: 1 | 2 | 3 }) {
 export function CartClient({ zones = [] }: { zones?: DeliveryZone[] }) {
   const { items, subtotalUsd, setQuantity, removeItem, hydrated } = useCart();
   const { draft, hydrated: draftHydrated } = useCheckoutDraft();
+  const [modal, setModal] = useState<{ images: Array<{ url: string; alt: string }>; index: number } | null>(null);
   const selectedZone =
     draft.fulfillmentType === "delivery" && draft.deliveryZoneId !== null
       ? zones.find((zone) => zone.id === draft.deliveryZoneId) ?? null
@@ -82,68 +85,69 @@ export function CartClient({ zones = [] }: { zones?: DeliveryZone[] }) {
           {items.map((item) => (
             <li
               key={item.productId}
-              className="flex gap-4 rounded-card bg-white p-4 shadow-sm"
+              className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 rounded-card bg-white p-4 shadow-sm"
             >
               {item.imageUrl ? (
-                <Image
-                  src={item.imageUrl}
-                  alt={item.name}
-                  width={240}
-                  height={180}
-                  className="aspect-[4/3] w-24 shrink-0 rounded-field border-2 border-rose object-cover"
-                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const urls = item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls : [item.imageUrl!];
+                    setModal({ images: urls.map((url) => ({ url, alt: item.name })), index: 0 });
+                  }}
+                  className="shrink-0 cursor-zoom-in self-start rounded-field focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender"
+                  aria-label={`Ver imagen de ${item.name} en grande`}
+                >
+                  <Image
+                    src={item.imageUrl}
+                    alt={item.name}
+                    width={240}
+                    height={180}
+                    className="aspect-square w-24 rounded-field border-2 border-rose object-cover sm:w-28"
+                  />
+                </button>
               ) : (
-                <div className="aspect-[4/3] w-24 shrink-0 rounded-field border-2 border-rose bg-rose/60" />
+                <div className="aspect-square w-24 shrink-0 self-start rounded-field border-2 border-rose bg-rose/60 sm:w-28" />
               )}
 
-              <div className="flex flex-1 flex-col gap-2">
-                <h2 className="font-display text-xl font-extrabold text-plum">
+              <div className="flex min-w-0 flex-col">
+                <h2 className="break-words font-display text-xl font-extrabold text-plum">
                   {item.name}
                 </h2>
                 <p className="font-display text-lg font-extrabold text-plum">
                   {formatUsd(item.priceUsd * item.quantity)}{" "}
                   <span className="text-sm">USD</span>
                 </p>
+              </div>
 
-                <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-display text-sm font-bold text-ink">
-                      Cantidad
-                    </span>
-                    <Button
-                      variant="secondary"
-                      aria-label={`Disminuir cantidad de ${item.name}`}
-                      onClick={() =>
-                        setQuantity(item.productId, item.quantity - 1)
-                      }
-                      className="min-h-10 px-3"
-                    >
-                      <MinusIcon className="size-4" />
-                    </Button>
-                    <output className="min-w-7 text-center font-display text-base font-extrabold text-plum">
-                      {item.quantity}
-                    </output>
-                    <Button
-                      variant="secondary"
-                      aria-label={`Aumentar cantidad de ${item.name}`}
-                      onClick={() =>
-                        setQuantity(item.productId, item.quantity + 1)
-                      }
-                      className="min-h-10 px-3"
-                    >
-                      <PlusIcon className="size-4" />
-                    </Button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => removeItem(item.productId)}
-                    className="inline-flex min-h-10 cursor-pointer items-center gap-1 font-display text-sm font-bold text-pink hover:underline"
-                  >
-                    <TrashIcon className="size-4" />
-                    Eliminar
-                  </button>
-                </div>
+              <div className="col-span-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 sm:col-span-1 sm:col-start-2 sm:justify-start">
+                <span className="mr-1 font-display text-sm font-bold text-ink">Cantidad</span>
+                <Button
+                  variant="secondary"
+                  aria-label={`Disminuir cantidad de ${item.name}`}
+                  onClick={() => setQuantity(item.productId, item.quantity - 1)}
+                  className="min-h-10 px-4"
+                >
+                  <MinusIcon className="size-4" />
+                </Button>
+                <output className="w-6 text-center font-display text-base font-extrabold text-plum">
+                  {item.quantity}
+                </output>
+                <Button
+                  variant="secondary"
+                  aria-label={`Aumentar cantidad de ${item.name}`}
+                  onClick={() => setQuantity(item.productId, item.quantity + 1)}
+                  className="min-h-10 px-4"
+                >
+                  <PlusIcon className="size-4" />
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => removeItem(item.productId)}
+                  className="inline-flex min-h-10 cursor-pointer items-center gap-1 font-display text-sm font-bold text-pink hover:underline sm:ml-auto"
+                >
+                  <TrashIcon className="size-4" />
+                  Eliminar
+                </button>
               </div>
             </li>
           ))}
@@ -168,7 +172,7 @@ export function CartClient({ zones = [] }: { zones?: DeliveryZone[] }) {
           {items.map((item) => (
             <li
               key={item.productId}
-              className="font-display text-base font-bold text-ink"
+              className="break-words font-display text-base font-bold text-ink"
             >
               {item.name} × {item.quantity}
             </li>
@@ -214,6 +218,12 @@ export function CartClient({ zones = [] }: { zones?: DeliveryZone[] }) {
           <ArrowRightIcon />
         </Link>
       </aside>
+      <ImageModal
+        images={modal?.images ?? []}
+        initialIndex={modal?.index ?? 0}
+        open={modal !== null}
+        onClose={() => setModal(null)}
+      />
     </div>
   );
 }

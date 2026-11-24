@@ -260,6 +260,15 @@ earlier.
 - The stale-rate maximum age remains an **unresolved business decision**:
   `is_stale` is informational only, no threshold is invented or enforced.
 
+## Phase 9 — Public product reviews 🔜
+
+- Local implementation on `features/product-reviews` (no PR/merge). Migration `014_product_reviews.sql` additive/local-only, **not applied remotely**.
+- Public reviews: no registration/login, optional name, required product/rating/comment, published immediately; admin hide/restore with audit log.
+- Verified reviews: tracking-token contextual path only; DB enforces one verified review per product per order.
+- Ranking: Bayesian weighted rating `WR=(v/(v+m))*R+(m/(v+m))*C`, `C=4.0`, `m=5`; no fabricated ratings.
+- Realtime: review tables added to publication; client subscriptions refresh/reconcile with RLS as authorization boundary.
+- Blocked: remote migration application/verification, PR creation (`gh` unavailable), production Realtime verification.
+
 ## Phase 6 — Realtime, communication and settings ⬜
 
 - Supabase Realtime notifications for both administrators (new order, new

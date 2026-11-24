@@ -10,6 +10,8 @@ import {
   getProductStock,
 } from "@/features/catalog/public-data";
 import { createSupabaseServerClient } from "@/infrastructure/supabase/server";
+import { listPublishedReviewsByProduct } from "@/features/reviews/queries";
+import { ProductReviewsSection } from "@/features/reviews/components/product-reviews";
 
 export const metadata: Metadata = {
   title: "Detalle del producto",
@@ -65,10 +67,21 @@ async function CatalogProduct({
 
   if (!product) notFound();
 
-  const [available, zones] = await Promise.all([
+  const [available, zones, reviews] = await Promise.all([
     getProductStock(product.id),
     getActiveDeliveryZones(),
+    listPublishedReviewsByProduct(product.id),
   ]);
 
-  return <ProductDetail product={product} available={available} zones={zones} />;
+  return (
+    <>
+      <ProductDetail product={product} available={available} zones={zones} />
+      <ProductReviewsSection
+        productId={product.id}
+        productName={product.name}
+        reviews={reviews}
+        aggregate={product.reviewAggregate ? { productId: product.id, reviewCount: product.reviewAggregate.reviewCount, averageRating: product.reviewAggregate.averageRating } : null}
+      />
+    </>
+  );
 }

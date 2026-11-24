@@ -841,3 +841,12 @@ covers invalid tokens, canceled/expired and eligible statuses, approval and
 rejection, all receipts including an unreviewed correction, exact 300-second
 lifetime, generic errors, cross-order isolation, ignored client-supplied
 identifiers and absence of sensitive data. No remote project was contacted.
+
+
+## 39. Public product reviews, moderation, and ranking — status: accepted (local implementation)
+
+**Context:** The store needs public product reviews without registration, with optional tracking-token verified reviews, admin moderation, realtime updates, and product ranking.
+
+**Decision:** Implement local-only migration `014_product_reviews.sql` with `product_reviews`, `product_review_aggregates`, private rate-limit ledger, RLS/force RLS, and additive Realtime publication for review tables. Public reads expose only published non-hidden reviews/aggregates for active products. Direct public table writes are revoked; anon receives only safe public review columns, authenticated has table SELECT constrained by RLS (published rows for non-admins, all rows for active admins), and no direct table UPDATE is granted. Submission uses `public.submit_product_review(...)` (SECURITY DEFINER, service_role execute) with server-side validation, advisory-locked submitter-hash rate limiting, server-side tracking-token verification via `get_order_for_tracking`, and DB unique index for one verified review per product per order. Moderation uses `set_product_review_hidden(...)` only, requiring active admin and writing `audit_log` actions `product_review.hide/restore`; hidden reviews remain in DB/admin views but are excluded from public reads and aggregates. Ranking uses Bayesian weighted rating `WR=(v/(v+m))*R+(m/(v+m))*C` with `C=4.0`, `m=5`; products with no published reviews receive no fabricated score.
+
+**Consequences:** Migration 014 is local-only until explicitly applied/verified remotely. Public submission is anonymous and rate-limited but not strong identity-based abuse-proofing. Realtime authorization relies on RLS; clients subscribe/refresh and reconcile. PR/push/remote apply not performed in this session.

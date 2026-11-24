@@ -40,6 +40,13 @@ export const catalogProductImageSchema = z.object({
 
 export type CatalogProductImage = z.infer<typeof catalogProductImageSchema>;
 
+export const catalogProductReviewAggregateSchema = z.object({
+  reviewCount: z.number().int().nonnegative(),
+  averageRating: z.number().min(0).max(5),
+});
+
+export type CatalogProductReviewAggregate = z.infer<typeof catalogProductReviewAggregateSchema>;
+
 /** The list and detail pages both render this single validated shape. */
 export const catalogProductSchema = z.object({
   id: z.number().int().positive(),
@@ -48,6 +55,7 @@ export const catalogProductSchema = z.object({
   description: z.string(),
   priceUsd: z.number().nonnegative(),
   images: z.array(catalogProductImageSchema),
+  reviewAggregate: catalogProductReviewAggregateSchema.nullable().optional(),
 });
 
 export type CatalogProduct = z.infer<typeof catalogProductSchema>;

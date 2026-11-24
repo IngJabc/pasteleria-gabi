@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/features/reviews/queries", () => ({
+  getReviewAggregatesByProductIds: vi.fn(async () => ({})),
+}));
 import {
   catalogUnavailableError,
   getActiveProductBySlug,

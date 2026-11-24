@@ -36,6 +36,7 @@ export const trackedOrderSchema = z.object({
   delivery_requires_quote: z.boolean().optional(),
   items: z.array(
     z.object({
+      product_id: z.coerce.number().int().positive().optional(),
       product_name: z.string().min(1),
       unit_price_usd: z.coerce.number().nonnegative(),
       quantity: z.number().int().positive(),

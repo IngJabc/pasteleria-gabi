@@ -25,6 +25,7 @@ const navItems = [
   { label: "Pedidos", href: "/admin/pedidos", icon: OrdersIcon },
   { label: "Pago externo", href: "/admin/pagos/externo", icon: CardIcon },
   { label: "Productos", href: "/admin/productos", icon: BoxIcon },
+  { label: "Reseñas", href: "/admin/resenas", icon: HeartIcon },
   { label: "Inventario FIFO", href: "/admin/inventario", icon: ArchiveIcon },
   { label: "Punto de venta", href: "/admin/punto-de-venta", icon: StoreIcon },
   {

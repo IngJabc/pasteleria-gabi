@@ -68,9 +68,9 @@ function hasConfiguredDetails(instruction: PaymentMethodInstruction | undefined)
 function DetailRow({ label, value }: { label: string; value: string | undefined }) {
   if (!value) return null;
   return (
-    <div className="flex justify-between gap-3 text-sm">
+    <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between sm:gap-3">
       <dt className="text-muted">{label}</dt>
-      <dd className="text-right font-bold text-ink">{value}</dd>
+      <dd className="min-w-0 break-words font-bold text-ink sm:text-right">{value}</dd>
     </div>
   );
 }
@@ -248,7 +248,7 @@ export function CheckoutPaymentForm({
     >
       <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <p className="font-display text-lg font-extrabold text-ink">
+          <p className="break-words font-display text-lg font-extrabold text-ink">
             Pedido #{orderId} · Total {formatUsd(totalUsd)}
           </p>
           <p className="text-sm text-muted">
@@ -275,21 +275,21 @@ export function CheckoutPaymentForm({
                     : "border-transparent bg-white shadow-sm hover:border-rose"
                 }`}
               >
-                <span className="flex items-center gap-3">
+                <span className="flex items-start gap-3">
                   <input
                     type="radio"
                     name="method"
                     value={option.id}
                     checked={selected}
                     onChange={() => setMethod(option.id)}
-                    className="size-5 accent-pink"
+                    className="mt-1 size-5 shrink-0 accent-pink"
                   />
-                  <span className="font-display text-lg font-extrabold text-plum">
+                  <span className="min-w-0 break-words font-display text-lg font-extrabold text-plum">
                     <span className="text-pink">{`0${index + 1}`}</span>{" "}
                     {instruction?.label?.trim() || option.title} · {option.currency}
                   </span>
                 </span>
-                <div className="pl-8 text-sm leading-6 text-ink">
+                <div className="min-w-0 pl-8 text-sm leading-6 text-ink">
                   {configured ? (
                     <dl className="space-y-1 rounded-field bg-white/70 p-3">
                       <DetailRow label="Banco / Plataforma" value={instruction?.bank} />
@@ -321,7 +321,7 @@ export function CheckoutPaymentForm({
                     : "border-transparent bg-yellow/80 shadow-sm hover:border-yellow"
                 } ${!canPayInStore ? "cursor-not-allowed opacity-80" : ""}`}
               >
-                <span className="flex items-center gap-3">
+                <span className="flex items-start gap-3">
                   <input
                     type="radio"
                     name="method"
@@ -329,13 +329,13 @@ export function CheckoutPaymentForm({
                     checked={isPayInStore}
                     onChange={() => setMethod("pay_in_store")}
                     disabled={!canPayInStore}
-                    className="size-5 accent-pink"
+                    className="mt-1 size-5 shrink-0 accent-pink"
                   />
-                  <span className="font-display text-lg font-extrabold text-plum">
+                  <span className="min-w-0 break-words font-display text-lg font-extrabold text-plum">
                     <span className="text-pink">04</span> Pagar en tienda
                   </span>
                 </span>
-                <span className="pl-8 text-sm leading-6 text-ink">
+                <span className="min-w-0 break-words pl-8 text-sm leading-6 text-ink">
                   {canPayInStore
                     ? fulfillmentType === "pickup"
                       ? "Paga en persona al retirar en el atelier, con el método de pago que prefieras. No necesitas enviar monto ni comprobante digital ahora."
@@ -385,11 +385,11 @@ export function CheckoutPaymentForm({
             </Field>
 
             {method === "pago_movil" && referenceVes !== null ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-field bg-mint px-4 py-3 text-sm font-bold text-ink">
-                <p>
+              <div className="flex flex-col gap-2 rounded-field bg-mint px-4 py-3 text-sm font-bold text-ink sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <p className="min-w-0 break-words">
                   Monto aproximado: Bs. {referenceVes.toFixed(2)}
                 </p>
-                <Button type="button" variant="ghost" className="min-h-10 px-3 py-2 text-sm" onClick={handleCopyAmount}>
+                <Button type="button" variant="ghost" className="min-h-10 w-full px-3 py-2 text-sm sm:w-auto" onClick={handleCopyAmount}>
                   Copiar monto
                 </Button>
               </div>
@@ -463,11 +463,11 @@ export function CheckoutPaymentForm({
               Number(values.pending_amount) + Number(values.in_review_amount);
             const verified = Number(values.approved_amount);
             return (
-              <div key={currency} className="flex justify-between gap-4">
-                <dt>
+              <div key={currency} className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:gap-4">
+                <dt className="min-w-0 break-words">
                   Reportado ({currency}) · Verificado ({currency})
                 </dt>
-                <dd className="text-right font-bold">
+                <dd className="font-bold sm:text-right">
                   {reported.toFixed(2)} · {verified.toFixed(2)}
                 </dd>
               </div>

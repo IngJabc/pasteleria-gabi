@@ -339,6 +339,58 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"product_review_aggregates": {
+                  Row: {
+                    "average_rating": number,"product_id": number,"rating_sum": number,"review_count": number,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "average_rating"?: number,"product_id": number,"rating_sum"?: number,"review_count"?: number,"updated_at"?: string
+                  }
+                  Update: {
+                    "average_rating"?: number,"product_id"?: number,"rating_sum"?: number,"review_count"?: number,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "product_review_aggregates_product_id_fkey"
+      columns: ["product_id"]
+isOneToOne: true
+      referencedRelation: "products"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"product_reviews": {
+                  Row: {
+                    "comment": string,"created_at": string,"hidden_at": string | null,"hidden_by": string | null,"id": number,"is_hidden": boolean,"is_verified_purchase": boolean,"order_id": number | null,"product_id": number,"rating": number,"reviewer_name": string | null,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "comment": string,"created_at"?: string,"hidden_at"?: string | null,"hidden_by"?: string | null,"id"?: never,"is_hidden"?: boolean,"is_verified_purchase"?: boolean,"order_id"?: number | null,"product_id": number,"rating": number,"reviewer_name"?: string | null,"updated_at"?: string
+                  }
+                  Update: {
+                    "comment"?: string,"created_at"?: string,"hidden_at"?: string | null,"hidden_by"?: string | null,"id"?: never,"is_hidden"?: boolean,"is_verified_purchase"?: boolean,"order_id"?: number | null,"product_id"?: number,"rating"?: number,"reviewer_name"?: string | null,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "product_reviews_hidden_by_fkey"
+      columns: ["hidden_by"]
+isOneToOne: false
+      referencedRelation: "administrators"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "product_reviews_order_id_fkey"
+      columns: ["order_id"]
+isOneToOne: false
+      referencedRelation: "orders"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "product_reviews_product_id_fkey"
+      columns: ["product_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"products": {
                   Row: {
                     "created_at": string,"description": string,"id": number,"is_active": boolean,"name": string,"price_usd": number,"slug": string,"updated_at": string
@@ -494,8 +546,14 @@ isOneToOne: false
 "request_order_cancellation":
 { Args: { "p_reason": string,"p_token": string }; Returns: number
                            },
+"set_product_review_hidden":
+{ Args: { "p_hidden": boolean,"p_review_id": number }; Returns: { [key: string]: unknown }
+                           },
 "submit_payment_evidence":
 { Args: { "p_payment_id": number }; Returns: Json
+                           },
+"submit_product_review":
+{ Args: { "p_comment": string,"p_product_id": number,"p_rating": number,"p_reviewer_name": string | null,"p_submitter_key": string | null,"p_tracking_token": string | null }; Returns: Json
                            }
           }
           Enums: {

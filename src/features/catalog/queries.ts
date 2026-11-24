@@ -8,6 +8,7 @@ import {
   type CatalogProduct,
   type ProductRow,
 } from "./schemas";
+import { getReviewAggregatesByProductIds } from "@/features/reviews/queries";
 
 /**
  * Public catalog reads. The client is supplied by the caller (the request-bound
@@ -63,14 +64,19 @@ export async function listActiveProducts(
   // contract stays deterministic even if the data source changes.
   rows.sort((a, b) => a.id - b.id);
 
-  const images = await fetchImages(
-    client,
-    rows.map((row) => row.id),
-    catalogUnavailableError,
-  );
+  const productIds = rows.map((row) => row.id);
+  const [images, aggregates] = await Promise.all([
+    fetchImages(client, productIds, catalogUnavailableError),
+    getReviewAggregatesByProductIds(productIds, client),
+  ]);
 
   return rows.map((row) =>
-    toCatalogProduct(row, images.get(row.id) ?? [], catalogUnavailableError),
+    toCatalogProduct(
+      row,
+      images.get(row.id) ?? [],
+      catalogUnavailableError,
+      aggregates[row.id] ?? null,
+    ),
   );
 }
 
@@ -92,16 +98,16 @@ export async function getActiveProductBySlug(
   if (!parsed.success) throw new Error(productUnavailableError);
   if (!parsed.data.is_active) return null;
 
-  const images = await fetchImages(
-    client,
-    [parsed.data.id],
-    productUnavailableError,
-  );
+  const [images, aggregates] = await Promise.all([
+    fetchImages(client, [parsed.data.id], productUnavailableError),
+    getReviewAggregatesByProductIds([parsed.data.id], client),
+  ]);
 
   return toCatalogProduct(
     parsed.data,
     images.get(parsed.data.id) ?? [],
     productUnavailableError,
+    aggregates[parsed.data.id] ?? null,
   );
 }
 
@@ -210,6 +216,7 @@ function toCatalogProduct(
   row: ProductRow,
   images: ImageWithUrl[],
   errorMessage: string,
+  reviewAggregate: { reviewCount: number; averageRating: number } | null = null,
 ): CatalogProduct {
   const parsed = catalogProductSchema.safeParse({
     id: row.id,
@@ -218,6 +225,7 @@ function toCatalogProduct(
     description: row.description,
     priceUsd: row.price_usd,
     images: mapImages(row, images),
+    reviewAggregate,
   });
 
   if (!parsed.success) throw new Error(errorMessage);

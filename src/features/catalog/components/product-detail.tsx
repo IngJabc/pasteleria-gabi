@@ -10,6 +10,8 @@ import type { DeliveryZone } from "../public-data";
 import { formatUsd } from "./price-format";
 import { Button, LiveRegion } from "@/components/ui/ui";
 import { ArrowRightIcon, MinusIcon, PlusIcon } from "@/components/ui/icons";
+import { ReviewStars } from "@/features/reviews/components/review-stars";
+import { ImageModal } from "@/components/ui/image-modal";
 
 /**
  * Product detail purchase panel. Prices and availability come from the server;
@@ -29,6 +31,7 @@ export function ProductDetail({
   const { showToast } = useToast();
   const [quantity, setQuantity] = useState(1);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [imageIndex, setImageIndex] = useState<number | null>(null);
 
   const image = product.images[0];
   const unitPrice = product.priceUsd;
@@ -52,6 +55,7 @@ export function ProductDetail({
         name: product.name,
         priceUsd: unitPrice,
         imageUrl: image?.url ?? null,
+        imageUrls: product.images.map((img) => img.url),
       },
       qty,
     );
@@ -64,14 +68,21 @@ export function ProductDetail({
     <article className="grid gap-10 lg:grid-cols-2">
       <div>
         {image ? (
-          <Image
-            src={image.url}
-            alt={image.alt}
-            width={1200}
-            height={900}
-            priority
-            className="aspect-[4/3] w-full rounded-section border-4 border-white object-cover shadow-sm"
-          />
+          <button
+            type="button"
+            onClick={() => setImageIndex(0)}
+            className="block w-full cursor-zoom-in rounded-section focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender"
+            aria-label={`Ver imagen de ${product.name} en grande`}
+          >
+            <Image
+              src={image.url}
+              alt={image.alt}
+              width={1200}
+              height={900}
+              priority
+              className="aspect-[4/3] w-full rounded-section border-4 border-white object-cover shadow-sm"
+            />
+          </button>
         ) : (
           <div className="flex aspect-[4/3] w-full items-center justify-center rounded-section border-4 border-white bg-rose text-muted">
             Sin imágenes disponibles
@@ -79,20 +90,33 @@ export function ProductDetail({
         )}
 
         {product.images.length > 1 ? (
-          <ul className="mt-4 flex gap-3 overflow-x-auto">
-            {product.images.slice(1).map((extra) => (
+          <ul className="mt-4 flex gap-3 overflow-x-auto pb-1">
+            {product.images.slice(1).map((extra, idx) => (
               <li key={extra.id} className="shrink-0">
-                <Image
-                  src={extra.url}
-                  alt={extra.alt}
-                  width={240}
-                  height={180}
-                  className="aspect-[4/3] w-28 rounded-card border-2 border-white object-cover"
-                />
+                <button
+                  type="button"
+                  onClick={() => setImageIndex(idx + 1)}
+                  className="block cursor-zoom-in rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender"
+                  aria-label={`Ver imagen ${idx + 2} de ${product.name} en grande`}
+                >
+                  <Image
+                    src={extra.url}
+                    alt={extra.alt}
+                    width={240}
+                    height={180}
+                    className="aspect-[4/3] w-28 rounded-card border-2 border-white object-cover"
+                  />
+                </button>
               </li>
             ))}
           </ul>
         ) : null}
+        <ImageModal
+          images={product.images.map((img) => ({ url: img.url, alt: img.alt }))}
+          initialIndex={imageIndex ?? 0}
+          open={imageIndex !== null}
+          onClose={() => setImageIndex(null)}
+        />
       </div>
 
       <div className="flex flex-col gap-4">
@@ -105,6 +129,15 @@ export function ProductDetail({
           {formatUsd(unitPrice)}{" "}
           <span className="text-xl">USD</span>
         </p>
+        {product.reviewAggregate && product.reviewAggregate.reviewCount > 0 ? (
+          <div className="flex items-center gap-2 text-sm text-ink">
+            <ReviewStars rating={product.reviewAggregate.averageRating} />
+            <span className="font-bold">{product.reviewAggregate.averageRating.toFixed(1)}</span>
+            <span className="text-muted">({product.reviewAggregate.reviewCount} reseñas)</span>
+          </div>
+        ) : (
+          <p className="text-sm text-muted">Aún no hay reseñas publicadas.</p>
+        )}
         <p className="font-bold text-ink">
           {available === null
             ? "Existencias: —"

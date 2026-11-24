@@ -25,6 +25,7 @@ export type CartItem = {
   name: string;
   priceUsd: number;
   imageUrl: string | null;
+  imageUrls?: string[];
   quantity: number;
 };
 
@@ -58,16 +59,33 @@ function readStoredCart(): CartItem[] {
     if (!raw) return EMPTY_CART;
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return EMPTY_CART;
-    return parsed.filter(
-      (item): item is CartItem =>
-        typeof item === "object" &&
-        item !== null &&
-        typeof (item as CartItem).productId === "number" &&
-        typeof (item as CartItem).slug === "string" &&
-        typeof (item as CartItem).name === "string" &&
-        typeof (item as CartItem).priceUsd === "number" &&
-        typeof (item as CartItem).quantity === "number",
-    );
+    return parsed.flatMap((item) => {
+      if (typeof item !== "object" || item === null) return [];
+      const c = item as Record<string, unknown>;
+      if (
+        typeof c.productId !== "number" ||
+        typeof c.slug !== "string" ||
+        typeof c.name !== "string" ||
+        typeof c.priceUsd !== "number" ||
+        typeof c.quantity !== "number"
+      ) {
+        return [];
+      }
+      const imageUrls = Array.isArray(c.imageUrls)
+        ? c.imageUrls.filter((u): u is string => typeof u === "string" && u.length > 0)
+        : typeof c.imageUrl === "string" && c.imageUrl
+          ? [c.imageUrl]
+          : [];
+      return [{
+        productId: c.productId,
+        slug: c.slug,
+        name: c.name,
+        priceUsd: c.priceUsd,
+        imageUrl: typeof c.imageUrl === "string" ? c.imageUrl : imageUrls[0] ?? null,
+        imageUrls,
+        quantity: c.quantity,
+      } satisfies CartItem];
+    });
   } catch {
     return EMPTY_CART;
   }

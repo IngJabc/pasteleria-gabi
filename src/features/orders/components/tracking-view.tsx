@@ -12,6 +12,8 @@ import { formatUsd } from "@/features/catalog/components/price-format";
 import { getReceiptUrlsForTracking } from "@/features/payments/receipt-review";
 import { Button, LiveRegion, Textarea } from "@/components/ui/ui";
 import { ArrowRightIcon, CheckIcon, ClockIcon } from "@/components/ui/icons";
+import { ReviewForm } from "@/features/reviews/components/review-form";
+import { ReviewFormDisclosure } from "@/features/reviews/components/review-form-disclosure";
 
 type Summary = Record<
   string,
@@ -138,11 +140,20 @@ export function TrackingView({
   const hasRejectedPayments = Object.values(summary).some(
     (values) => Number(values.rejected_amount) > 0,
   );
+  const deliveryFee = Number(order.delivery_fee_usd);
+  const isFreeDelivery = order.fulfillment_type === "delivery" && Number.isFinite(deliveryFee) && deliveryFee === 0;
+  const payInStoreEligible =
+    (order.fulfillment_type === "pickup" || isFreeDelivery) &&
+    !(order.quote_acceptance_available === true) &&
+    !quotePending;
+  const isPayInStoreOrder =
+    payInStoreConfirmed || (payInStoreEligible && !hasReportedPayments && !hasRejectedPayments);
   const canPay =
     ["pending", "confirmed"].includes(order.status) &&
     !(order.quote_acceptance_available === true) &&
     !quotePending &&
-    !hasReportedPayments;
+    !hasReportedPayments &&
+    !isPayInStoreOrder;
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const contactWhatsappHref = whatsappHref(whatsappPhone);
   const showCanceledPaymentHelp =
@@ -394,6 +405,11 @@ export function TrackingView({
               </p>
             </div>
           </div>
+        ) : isPayInStoreOrder && ["pending", "confirmed"].includes(order.status) ? (
+          <p className="mt-4 flex items-start gap-2 text-sm leading-6 text-ink">
+            <CheckIcon className="mt-0.5 size-4 shrink-0 text-pink" />
+            Elegiste pagar en tienda. Pagarás en persona al {order.fulfillment_type === "pickup" ? "retirar tu pedido en el atelier" : "recibir tu delivery gratis"}. No necesitas registrar un pago digital aquí.
+          </p>
         ) : hasReportedPayments && ["pending", "confirmed"].includes(order.status) ? (
           <p className="mt-4 flex items-start gap-2 text-sm leading-6 text-ink">
             <ClockIcon className="mt-0.5 size-4 shrink-0 text-pink" />
@@ -436,6 +452,27 @@ export function TrackingView({
           </ul>
         ) : null}
       </section>
+
+      {(order.status === "completed" || order.status === "delivered") ? (
+        <section className="rounded-card bg-mint/50 p-6 shadow-sm">
+          <ReviewFormDisclosure title="Calificar tu pedido">
+            <ReviewForm
+              products={order.items
+                .map((item) => {
+                  const id = (item as { product_id?: number }).product_id;
+                  return typeof id === "number" ? { id, name: item.product_name } : null;
+                })
+                .filter((p): p is { id: number; name: string } => p !== null && Number.isSafeInteger(p.id) && p.id > 0)}
+              trackingToken={token}
+              title="Califica tu pedido"
+              compact
+            />
+            <p className="mt-2 text-xs text-muted">
+              Si calificas un producto de este pedido desde este enlace privado, la reseña puede marcarse como compra verificada.
+            </p>
+          </ReviewFormDisclosure>
+        </section>
+      ) : null}
 
       {showCanceledPaymentHelp ? (
         <section className="rounded-card bg-rose/30 p-6 shadow-sm">

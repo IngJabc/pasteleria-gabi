@@ -9,6 +9,7 @@ import { getStoreSettings } from "@/features/settings/admin-settings";
 import { createSupabaseServerClient } from "@/infrastructure/supabase/server";
 import { ArrowRightIcon, FlowerIcon, HeartIcon } from "@/components/ui/icons";
 import { buttonPrimaryClass } from "@/components/ui/ui";
+import { HomepageReviewsSection } from "@/features/reviews/components/homepage-reviews";
 
 export default function HomePage() {
   return (
@@ -145,6 +146,13 @@ async function HomeData() {
           </ol>
         </div>
       </section>
+
+      <HomepageReviewsSection
+        products={products.map((p) => ({ id: p.id, name: p.name, slug: p.slug, priceUsd: p.priceUsd }))}
+        aggregatesByProductId={Object.fromEntries(
+          products.map((p) => [p.id, p.reviewAggregate ? { productId: p.id, reviewCount: p.reviewAggregate.reviewCount, averageRating: p.reviewAggregate.averageRating } : undefined]),
+        )}
+      />
 
       <section className="container-page py-12">
         <div className="grid gap-8 rounded-section bg-sky px-6 py-10 md:grid-cols-2 md:px-12">

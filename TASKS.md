@@ -879,6 +879,18 @@ was clean.
 
 ---
 
+## M9 — Public product reviews (in progress, local)
+
+Branch: `features/product-reviews` (from `24f52fa`). No commit/push/merge/remote migration/deploy performed.
+
+- [x] Added local-only additive migration `014_product_reviews.sql`: reviews/aggregates/rate-limit ledger, RLS/force RLS, public published-read/admin moderation policies, `submit_product_review` (service_role execute, server-validated token/order verification, one verified review/product/order DB unique index), `set_product_review_hidden` admin RPC with audit log, aggregate trigger, tracking projection adds `product_id`, additive Realtime publication. **Not applied remotely**.
+- [x] Storefront: public review form (optional name, required product/rating/comment), homepage section/footer link, product detail/card ratings and published reviews, completed/delivered tracking verified-review entry point. Published non-hidden only; aggregates exclude hidden.
+- [x] Admin `/admin/resenas`: filters, verified badge, hide/restore via session-gated server action + RPC audit log.
+- [x] Realtime: client subscriptions with cleanup/refresh reconciliation; RLS remains authorization boundary. Bayesian ranking `C=4.0, m=5`; no fabricated ratings.
+- [x] Tests/docs: ranking/schema unit tests, migration 014 contract test, migration filename contract updates. `lint`, `typecheck`, `build`, full `vitest`, `validate:autopilot` passed.
+
+Blocked/not claimed: migration 014 local-only; `gh` unavailable so PR needs authenticated alternative/manual; remote Realtime unverified.
+
 ## Frontend UX/UI — Storefront implementation (in progress, local)
 
 Branch: `features/frontend-ux-ui` (from `4f3849ac80adf7435a7c7aa2865c54ddfe4313bf`, PR #15 merge). No commit, push, merge, remote migration, deployment, or secret change performed.

@@ -292,7 +292,7 @@ export function DeliveryForm({
           {items.map((item) => (
             <li
               key={item.productId}
-              className="font-display text-base font-bold text-ink"
+              className="break-words font-display text-base font-bold text-ink"
             >
               {item.name} × {item.quantity}
             </li>

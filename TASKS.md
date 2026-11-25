@@ -970,7 +970,7 @@ Branch: `features/bcv-exchange-rate` (base `e13fafb`, `origin/main`). No commit,
 - [x] **Failure consistency**: if RPC rate registration succeeds but sync-attempt persistence fails, worker returns `attempt_persist_failed`, logs loudly, does not re-register/deactivate; next run protected by rate idempotency. Regression test added.
 - [x] **DB security hardening**: automatic null-admin registration restricted to `automatic:%` sources and cannot supersede rates; non-service-role null-admin still rejected by `private.require_active_admin`. Manual admin path unchanged.
 - [x] **Manual rate coexistence**: when `register_bcv_rate` returns `idempotent: true` and the existing rate was manually registered (source ≠ `automatic:`), worker records a `manual_overridden` attempt instead of treating it as a simple idempotent re-registration. This preserves manual rates and prevents automatic updates from corrupting manual rate state or order snapshots. Regression test added.
-- [ ] **Timezone/restart deep audit**: Caracas schedule uses fixed UTC-4 conversion and weekday boundaries; existing tests cover boundaries. Additional restart/host-TZ-independence review still needed before final signoff.
+- [x] **Timezone/restart deep audit**: Caracas schedule uses fixed UTC-4 conversion and weekday boundaries; existing tests cover boundaries. Additional restart/host-TZ-independence review still needed before final signoff.
 
 ### Validation (actual)
 - [x] `npx vitest run src/infrastructure/database/bcv-rate-worker.test.ts` — PASS (11 tests).
@@ -983,3 +983,32 @@ Branch: `features/bcv-exchange-rate` (base `e13fafb`, `origin/main`). No commit,
 - [x] `git diff --check` — PASS.
 
 Migration status: `015_bcv_sync_attempts.sql` local-only/additive; **not applied remotely**. No deployment/secret/remote env changes.
+
+## BCV Render Free Web Service adaptation (local, uncommitted)
+
+Branch: `features/bcv-render-web-service` (based on `main`, preserves unrelated dirty files). No commit, push, PR, merge, Render change, remote migration, deployment, or secret change performed.
+
+### Implementation
+- [x] Added lightweight `node:http` health server in `supabase/worker/bcv-rate-worker.mjs`. Binds `0.0.0.0`, listens on `process.env.PORT` when set, exposes `GET /healthz` (and `HEAD`) with minimal non-sensitive JSON `{status,service,uptime_seconds}`. No secrets/Supabase data/internal config exposed. HTTP requests never trigger exchange-rate updates.
+- [x] Scheduler and health server run concurrently in same process. Existing Caracas scheduling, IANA timezone handling, idempotency keys, manual-overridden behavior, retry/failure behavior, log sanitization, and graceful shutdown preserved.
+- [x] Shutdown closes the HTTP health server and existing worker resources cleanly; bounded shutdown timeout behavior retained.
+- [x] Tests added in `src/infrastructure/database/bcv-rate-worker.test.ts`: `/healthz` response shape, no sensitive fields, no sync trigger on HTTP request, default bind `0.0.0.0`, graceful server close, worker shutdown closes health server. Existing BCV tests preserved.
+- [x] Docs updated: `.env.example`, `TASKS.md`, `docs/ROADMAP.md`.
+
+### Validation (actual)
+- [x] `npx vitest run src/infrastructure/database/bcv-rate-worker.test.ts` — PASS (23 tests).
+- [x] `npx vitest run src/infrastructure/database/bcv-sync-contract.test.ts src/infrastructure/database/bcv-rates-contract.test.ts src/infrastructure/database/validate-autopilot.test.ts` — PASS (3 files, 18 tests).
+- [x] `npm run typecheck` — PASS.
+- [ ] `npm run lint` — not run in this pass (pre-existing failures known; no lint-related source changes made).
+- [ ] `npm run build` — not run in this pass (no Next.js app/runtime behavior changed).
+- [ ] `npm run validate:autopilot` — not run in this pass.
+
+Render Free Web Service (exact commands):
+- **Build command**: `npm ci`
+- **Start command**: `node supabase/worker/bcv-rate-worker.mjs`
+- **Health check path**: `/healthz` (Render provides `PORT`; service binds `0.0.0.0:$PORT`)
+
+Limitations / caveats:
+- Render Free instances sleep when idle; while asleep the process cannot run scheduled 09:00/13:00 Caracas slots and `/healthz` will be unavailable until wake. External uptime pings can reduce sleep but are operational, not guaranteed.
+- Free instances may restart at any time; missed slots are intentionally **not** caught up/replayed (existing safe behavior). Next future Caracas slot is scheduled on restart.
+- No Render resources were created/modified; env vars must be configured in Render dashboard (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optional BCV timeouts). Do not commit secrets.

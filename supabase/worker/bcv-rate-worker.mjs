@@ -7,15 +7,21 @@
  * a rate through the existing service-role RPC (`register_bcv_rate`) and records
  * a durable sync attempt in `bcv_sync_attempts` for admin visibility.
  *
+ * Render Free Web Service compatibility: when PORT is set, the worker also
+ * exposes a lightweight GET /healthz endpoint on 0.0.0.0. HTTP requests never
+ * trigger exchange-rate updates and never expose secrets or internal config.
+ * The scheduler and HTTP server run concurrently in the same process.
+ *
  * This worker is intentionally independent from OQ-16 SLA notifications.
  *
  * Local execution (Node 22+):
  *   node --env-file=.env.local supabase/worker/bcv-rate-worker.mjs
  * Required env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
- * Optional env: BCV_SYNC_FETCH_TIMEOUT_MS, BCV_SYNC_SHUTDOWN_TIMEOUT_MS.
+ * Optional env: PORT, BCV_SYNC_FETCH_TIMEOUT_MS, BCV_SYNC_SHUTDOWN_TIMEOUT_MS.
  */
 
 import { createClient } from "@supabase/supabase-js";
+import http from "node:http";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -25,6 +31,7 @@ export const BCV_SOURCE = "automatic:bcv.today";
 export const CARACAS_TIME_ZONE = "America/Caracas";
 export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+export const DEFAULT_HEALTH_HOST = "0.0.0.0";
 export const SCHEDULE_SLOTS = [
   { hour: 9, minute: 0, label: "09:00" },
   { hour: 13, minute: 0, label: "13:00" },
@@ -65,6 +72,61 @@ function positiveInt(value, fallback) {
   if (value === undefined || value === "") return fallback;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function startBcvHealthServer({
+  port = 0,
+  host = DEFAULT_HEALTH_HOST,
+  startedAt = new Date(),
+  now = () => new Date(),
+  workerName = WORKER_NAME,
+} = {}) {
+  const server = http.createServer((req, res) => {
+    const method = req.method === "HEAD" ? "HEAD" : req.method;
+    const url = req.url ?? "/";
+    if ((method === "GET" || method === "HEAD") && (url === "/healthz" || url === "/healthz/")) {
+      // Minimal, non-sensitive payload. Never expose secrets, Supabase data, or config.
+      const body = JSON.stringify({
+        status: "ok",
+        service: workerName,
+        uptime_seconds: Math.max(0, Math.floor((now().getTime() - startedAt.getTime()) / 1000)),
+      });
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Length": Buffer.byteLength(body),
+      });
+      res.end(method === "HEAD" ? undefined : body);
+      return;
+    }
+
+    const notFound = JSON.stringify({ status: "not_found" });
+    res.writeHead(404, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Length": Buffer.byteLength(notFound),
+    });
+    res.end(method === "HEAD" ? undefined : notFound);
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.off("error", reject);
+      const address = server.address();
+      resolve({
+        port: typeof address === "object" && address ? address.port : port,
+        host,
+        close: () =>
+          new Promise((resolveClose, rejectClose) => {
+            server.close((error) => {
+              if (error) rejectClose(error);
+              else resolveClose();
+            });
+          }),
+      });
+    });
+  });
 }
 
 function isPlainObject(value) {
@@ -592,11 +654,15 @@ export function createBcvSyncWorker({
   fetchTimeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
   getNextSlot = getNextScheduleSlot,
   runOnce = runBcvSyncOnce,
+  healthPort,
+  healthHost = DEFAULT_HEALTH_HOST,
+  startHealthServer = startBcvHealthServer,
 } = {}) {
   const controller = new AbortController();
   let stopping = false;
   let running = false;
   let inFlight = null;
+  let healthServer = null;
   let resolveDone;
   const done = new Promise((resolve) => {
     resolveDone = resolve;
@@ -659,14 +725,21 @@ export function createBcvSyncWorker({
     }
   }
 
-  let loopPromise = null;
-  function start() {
-    if (loopPromise) return loopPromise;
-    loopPromise = loop();
-    return loopPromise;
+  async function closeHealthServer() {
+    if (!healthServer) return;
+    try {
+      await healthServer.close();
+      logger.info("health_server_stopped", { status: "stopped" });
+    } catch (error) {
+      logger.error("health_server_stop_error", {
+        error: sanitizeErrorDetail(error instanceof Error ? error.message : String(error)),
+      });
+    } finally {
+      healthServer = null;
+    }
   }
 
-  async function stop(signal = "manual") {
+  async function shutdown(signal) {
     if (stopping) {
       await done;
       return;
@@ -674,6 +747,7 @@ export function createBcvSyncWorker({
     stopping = true;
     controller.abort();
     logger.info("worker_shutdown", { signal, waiting_for_cycle: running });
+    await closeHealthServer();
     let timeoutTimer;
     const timedOut = new Promise((resolve) => {
       timeoutTimer = setTimeout(() => {
@@ -687,7 +761,33 @@ export function createBcvSyncWorker({
     await done;
   }
 
-  return { start, stop, done, isRunning: () => running };
+  let loopPromise = null;
+  async function start() {
+    if (loopPromise) return;
+    if (healthPort !== undefined && healthPort !== null && healthPort !== "") {
+      const parsedPort = Number(healthPort);
+      if (!Number.isSafeInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535) {
+        throw new Error("PORT must be a valid TCP port");
+      }
+      healthServer = await startHealthServer({
+        port: parsedPort,
+        host: healthHost,
+        startedAt: clock(),
+        now: clock,
+        workerName: WORKER_NAME,
+      });
+      logger.info("health_server_started", { host: healthHost, port: healthServer.port });
+    }
+    loopPromise = loop().finally(async () => {
+      await closeHealthServer();
+    });
+  }
+
+  async function stop(signal = "manual") {
+    await shutdown(signal);
+  }
+
+  return { start, stop, done, isRunning: () => running, getHealthPort: () => healthServer?.port ?? null };
 }
 
 export async function main() {
@@ -715,6 +815,8 @@ export async function main() {
     logger,
     fetchTimeoutMs: positiveInt(process.env.BCV_SYNC_FETCH_TIMEOUT_MS, DEFAULT_FETCH_TIMEOUT_MS),
     shutdownTimeoutMs: positiveInt(process.env.BCV_SYNC_SHUTDOWN_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS),
+    healthPort: process.env.PORT,
+    healthHost: DEFAULT_HEALTH_HOST,
   });
 
   const shutdown = (signal) => {
@@ -723,7 +825,7 @@ export async function main() {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-  worker.start();
+  await worker.start();
   await worker.done;
 }
 

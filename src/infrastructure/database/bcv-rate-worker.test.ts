@@ -11,6 +11,7 @@ import {
   parseIsoTimestamp,
   runBcvSyncOnce,
   sanitizeErrorDetail,
+  startBcvHealthServer,
   validateBcvPayload,
 } from "../../../supabase/worker/bcv-rate-worker.mjs";
 
@@ -538,5 +539,77 @@ describe("BCV rate worker", () => {
       registered_rate_id: 22,
       error_code: null,
     }));
+  });
+
+  it("exposes GET /healthz with minimal non-sensitive JSON and does not trigger sync", async () => {
+    const runOnce = vi.fn();
+    let nowMs = Date.parse("2026-11-24T13:00:00.000Z");
+    const worker = createBcvSyncWorker({
+      rpc: vi.fn(),
+      insertAttempt: vi.fn(),
+      supabase: makeSupabaseActiveRate(null),
+      logger: makeLogger(),
+      fetchImpl: vi.fn(),
+      clock: () => new Date(nowMs),
+      sleep: (_ms: number, signal?: AbortSignal) => new Promise<void>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true })),
+      getNextSlot: () => ({ slotKey: "never", scheduledAt: "2099-01-01T00:00:00.000Z", delayMs: 60_000, slotDate: "2099-01-01", slotLabel: "00:00" }),
+      runOnce,
+      healthPort: 0,
+      healthHost: "127.0.0.1",
+    } as unknown as Parameters<typeof createBcvSyncWorker>[0]);
+
+    await worker.start();
+    try {
+      const port = worker.getHealthPort();
+      expect(port).toBeGreaterThan(0);
+      nowMs += 30_000;
+      const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as Record<string, unknown>;
+      expect(body).toEqual({ status: "ok", service: "bcv-sync", uptime_seconds: 30 });
+      expect(JSON.stringify(body)).not.toMatch(/SUPABASE|service_role|secret|key|token|NEXT_PUBLIC|DATABASE/i);
+      expect(runOnce).not.toHaveBeenCalled();
+    } finally {
+      await worker.stop("test");
+    }
+  });
+
+  it("health server binds 0.0.0.0 by default and closes on shutdown", async () => {
+    const server = await startBcvHealthServer({
+      port: 0,
+      startedAt: new Date("2026-11-24T13:00:00.000Z"),
+      now: () => new Date("2026-11-24T13:00:05.000Z"),
+    });
+    try {
+      expect(server.host).toBe("0.0.0.0");
+      const res = await fetch(`http://127.0.0.1:${server.port}/healthz`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: "ok", service: "bcv-sync", uptime_seconds: 5 });
+    } finally {
+      await server.close();
+    }
+    await expect(fetch(`http://127.0.0.1:${server.port}/healthz`)).rejects.toThrow();
+  });
+
+  it("worker shutdown closes the health server", async () => {
+    const worker = createBcvSyncWorker({
+      rpc: vi.fn(),
+      insertAttempt: vi.fn(),
+      supabase: makeSupabaseActiveRate(null),
+      logger: makeLogger(),
+      fetchImpl: vi.fn(),
+      clock: () => new Date("2026-11-24T13:00:00.000Z"),
+      sleep: (_ms: number, signal?: AbortSignal) => new Promise<void>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true })),
+      getNextSlot: () => ({ slotKey: "never", scheduledAt: "2099-01-01T00:00:00.000Z", delayMs: 60_000, slotDate: "2099-01-01", slotLabel: "00:00" }),
+      runOnce: vi.fn(),
+      healthPort: 0,
+      healthHost: "127.0.0.1",
+    } as unknown as Parameters<typeof createBcvSyncWorker>[0]);
+
+    await worker.start();
+    const port = worker.getHealthPort();
+    expect(port).toBeGreaterThan(0);
+    await worker.stop("SIGTERM");
+    await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow();
   });
 });

@@ -103,28 +103,33 @@ export function CheckoutPaymentForm({
   const router = useRouter();
   const { clear: clearCart } = useCart();
   const formRef = useRef<HTMLFormElement>(null);
-  const [method, setMethod] = useState<Method>("pago_movil");
-  const isPayInStore = method === "pay_in_store";
-  const [isPending, startTransition] = useTransition();
-  const [isPayInStorePending, startPayInStoreTransition] = useTransition();
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [copyAmountFeedback, setCopyAmountFeedback] = useState<string | null>(null);
-  const [invalid, setInvalid] = useState<Record<string, boolean>>({});
   const quotePending = deliveryRequiresQuote && deliveryFeeUsd === null;
-
   const referenceRate = rate?.rateVesPerUsd ?? null;
   const referenceVes =
     referenceRate === null ? null : totalUsd * Number(referenceRate);
 
-  async function handleCopyAmount() {
-    if (referenceVes === null) return;
-    const value = referenceVes.toFixed(2);
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopyAmountFeedback("Monto copiado.");
-    } catch {
-      setCopyAmountFeedback("No se pudo copiar automáticamente.");
+  function defaultAmountFor(nextMethod: Method): string {
+    if (nextMethod === "pago_movil") {
+      return referenceVes === null ? "" : referenceVes.toFixed(2);
     }
+    if (nextMethod === "binance_pay" || nextMethod === "binance_transfer") {
+      return totalUsd.toFixed(2);
+    }
+    return "";
+  }
+
+  const [method, setMethod] = useState<Method>("pago_movil");
+  const isPayInStore = method === "pay_in_store";
+  const [amount, setAmount] = useState(() => defaultAmountFor("pago_movil"));
+  const [isPending, startTransition] = useTransition();
+  const [isPayInStorePending, startPayInStoreTransition] = useTransition();
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState<Record<string, boolean>>({});
+
+  function handleMethodChange(nextMethod: Method) {
+    setMethod(nextMethod);
+    setAmount(defaultAmountFor(nextMethod));
+    setFeedback(null);
   }
 
   function handlePayInStore() {
@@ -281,7 +286,7 @@ export function CheckoutPaymentForm({
                     name="method"
                     value={option.id}
                     checked={selected}
-                    onChange={() => setMethod(option.id)}
+                    onChange={() => handleMethodChange(option.id)}
                     className="mt-1 size-5 shrink-0 accent-pink"
                   />
                   <span className="min-w-0 break-words font-display text-lg font-extrabold text-plum">
@@ -327,7 +332,7 @@ export function CheckoutPaymentForm({
                     name="method"
                     value="pay_in_store"
                     checked={isPayInStore}
-                    onChange={() => setMethod("pay_in_store")}
+                    onChange={() => handleMethodChange("pay_in_store")}
                     disabled={!canPayInStore}
                     className="mt-1 size-5 shrink-0 accent-pink"
                   />
@@ -363,8 +368,8 @@ export function CheckoutPaymentForm({
               label={method === "pago_movil" ? "Monto (VES)" : "Monto (USDT)"}
               hint={
                 method === "pago_movil" && referenceRate !== null
-                  ? `Tasa BCV de referencia: Bs. ${referenceRate} por USD.`
-                  : "1 USDT = 1 USD."
+                  ? `Tasa BCV de referencia: Bs. ${referenceRate} por USD. Puedes ajustar el monto si lo necesitas.`
+                  : "1 USDT = 1 USD. Puedes ajustar el monto si lo necesitas."
               }
             >
               <Input
@@ -373,7 +378,8 @@ export function CheckoutPaymentForm({
                 inputMode="decimal"
                 required
                 pattern={numberPattern.source}
-                placeholder={method === "pago_movil" ? "700.00" : totalUsd.toFixed(2)}
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
                 aria-invalid={invalid["payment-amount"] ?? false}
                 onInvalid={() =>
                   setInvalid((current) => ({ ...current, "payment-amount": true }))
@@ -383,18 +389,6 @@ export function CheckoutPaymentForm({
                 }
               />
             </Field>
-
-            {method === "pago_movil" && referenceVes !== null ? (
-              <div className="flex flex-col gap-2 rounded-field bg-mint px-4 py-3 text-sm font-bold text-ink sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                <p className="min-w-0 break-words">
-                  Monto aproximado: Bs. {referenceVes.toFixed(2)}
-                </p>
-                <Button type="button" variant="ghost" className="min-h-10 w-full px-3 py-2 text-sm sm:w-auto" onClick={handleCopyAmount}>
-                  Copiar monto
-                </Button>
-              </div>
-            ) : null}
-            <LiveRegion className="text-sm text-muted">{copyAmountFeedback ?? ""}</LiveRegion>
 
             <Field
               id="payment-reference"

@@ -323,6 +323,14 @@ earlier.
     restricted to `service_role` + `automatic:%` source + `p_supersedes_id IS NULL`.
     Manual admin path fully preserved via `private.require_active_admin`. Remaining
     audit: restart/host-TZ deep check.
+  - **Render Free Web Service adaptation (local, branch `features/bcv-render-web-service`):**
+    worker can bind `0.0.0.0:$PORT` and expose `GET /healthz` (minimal
+    non-sensitive JSON) for Render Free Web Service health checks. HTTP requests
+    never trigger sync. Scheduler and health server run concurrently; shutdown
+    closes HTTP server and worker resources cleanly. Render build/start:
+    `npm ci` / `node supabase/worker/bcv-rate-worker.mjs`. **Free limitation:**
+    sleeping instances can miss fixed Caracas slots; missed slots are intentionally
+    not replayed. No Render resources/deploy performed.
 
 ## Developer automation: autonomous OpenCode workflow (complete)
 

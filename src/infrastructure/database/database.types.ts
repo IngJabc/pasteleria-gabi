@@ -405,6 +405,26 @@ isOneToOne: false
                   Relationships: [
                     
                   ]
+                },"bcv_sync_attempts": {
+                  Row: {
+                    "attempted_at": string,"created_at": string,"effective_date": string | null,"error_code": string | null,"error_detail": string | null,"id": number,"idempotency_key": string,"provider_updated_at": string | null,"rate_ves_per_usd": number | null,"registered_rate_id": number | null,"retrieved_at": string | null,"schedule_slot": string,"source": string,"status": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "attempted_at"?: string,"created_at"?: string,"effective_date"?: string | null,"error_code"?: string | null,"error_detail"?: string | null,"id"?: never,"idempotency_key": string,"provider_updated_at"?: string | null,"rate_ves_per_usd"?: number | null,"registered_rate_id"?: number | null,"retrieved_at"?: string | null,"schedule_slot": string,"source": string,"status": string
+                  }
+                  Update: {
+                    "attempted_at"?: string,"created_at"?: string,"effective_date"?: string | null,"error_code"?: string | null,"error_detail"?: string | null,"id"?: never,"idempotency_key"?: string,"provider_updated_at"?: string | null,"rate_ves_per_usd"?: number | null,"registered_rate_id"?: number | null,"retrieved_at"?: string | null,"schedule_slot"?: string,"source"?: string,"status"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "bcv_sync_attempts_registered_rate_id_fkey"
+      columns: ["registered_rate_id"]
+isOneToOne: false
+      referencedRelation: "exchange_rates"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"receipt_submissions": {
                   Row: {
                     "attempt_number": number,"id": number,"order_id": number,"payment_id": number | null,"review_status": string,"reviewed_at": string | null,"submitted_at": string

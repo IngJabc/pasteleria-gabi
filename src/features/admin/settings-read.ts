@@ -74,6 +74,20 @@ export type AdminBcvRateView = {
   asOf: string;
 };
 
+export type AdminBcvSyncView = {
+  id: number;
+  attemptedAt: string;
+  status: "success" | "failure" | "skipped" | "manual_overridden";
+  source: string;
+  scheduleSlot: string;
+  effectiveDate: string | null;
+  providerUpdatedAt: string | null;
+  retrievedAt: string | null;
+  rateVesPerUsd: string | number | null;
+  errorCode: string | null;
+  errorDetail: string | null;
+};
+
 /** Explicit serializable shape for the JSONB configuration columns. */
 export type AdminJsonValue =
   | string
@@ -98,6 +112,10 @@ export type AdminSettingsSnapshotResult = {
   deliveryZones: AdminDeliveryZoneView[];
   /** `null` when there is no active rate or the rate read failed. */
   bcvRate: AdminBcvRateView | null;
+  /** Latest automatic sync attempt; `null` when unavailable or never run. */
+  bcvSync: AdminBcvSyncView | null;
+  /** Latest successful automatic retrieval timestamp; null if none. */
+  bcvLastSuccessfulRetrievalAt: string | null;
 };
 
 export type AdminNotificationItem = {
@@ -134,6 +152,8 @@ function unavailableSnapshot(message: string): AdminSettingsSnapshotResult {
     settings: emptySettingsView(),
     deliveryZones: [],
     bcvRate: null,
+    bcvSync: null,
+    bcvLastSuccessfulRetrievalAt: null,
   };
 }
 
@@ -211,12 +231,74 @@ export async function getAdminSettingsSnapshot(): Promise<AdminSettingsSnapshotR
       bcvRate = null;
     }
 
+    let bcvSync: AdminBcvSyncView | null = null;
+    let bcvLastSuccessfulRetrievalAt: string | null = null;
+    try {
+      const [latestResult, lastSuccessResult] = await Promise.all([
+        supabase
+          .from("bcv_sync_attempts")
+          .select(
+            "id, attempted_at, status, source, schedule_slot, effective_date, provider_updated_at, retrieved_at, rate_ves_per_usd, error_code, error_detail",
+          )
+          .order("attempted_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("bcv_sync_attempts")
+          .select("retrieved_at")
+          .eq("status", "success")
+          .not("retrieved_at", "is", null)
+          .order("attempted_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      if (!latestResult.error && latestResult.data) {
+        const row = latestResult.data as {
+          id: number;
+          attempted_at: string;
+          status: "success" | "failure" | "skipped" | "manual_overridden";
+          source: string;
+          schedule_slot: string;
+          effective_date: string | null;
+          provider_updated_at: string | null;
+          retrieved_at: string | null;
+          rate_ves_per_usd: string | number | null;
+          error_code: string | null;
+          error_detail: string | null;
+        };
+        bcvSync = {
+          id: row.id,
+          attemptedAt: row.attempted_at,
+          status: row.status,
+          source: row.source,
+          scheduleSlot: row.schedule_slot,
+          effectiveDate: row.effective_date,
+          providerUpdatedAt: row.provider_updated_at,
+          retrievedAt: row.retrieved_at,
+          rateVesPerUsd: row.rate_ves_per_usd,
+          errorCode: row.error_code,
+          errorDetail: row.error_detail,
+        };
+      }
+      if (!lastSuccessResult.error && lastSuccessResult.data) {
+        bcvLastSuccessfulRetrievalAt = (lastSuccessResult.data as { retrieved_at: string | null }).retrieved_at;
+      } else if (bcvSync?.status === "success") {
+        bcvLastSuccessfulRetrievalAt = bcvSync.retrievedAt;
+      }
+    } catch {
+      bcvSync = null;
+      bcvLastSuccessfulRetrievalAt = null;
+    }
+
     return {
       unavailable: false,
       message: "",
       settings,
       deliveryZones,
       bcvRate,
+      bcvSync,
+      bcvLastSuccessfulRetrievalAt,
     };
   } catch {
     return unavailableSnapshot(unavailableError);

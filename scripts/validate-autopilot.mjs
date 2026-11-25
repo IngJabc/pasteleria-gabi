@@ -78,6 +78,27 @@ function makeState(patch = {}, template) {
   };
 }
 
+const isDirectRun =
+  process.argv[1] !== undefined &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+export function isForbiddenAutopilotChange(filePath) {
+  const normalized = String(filePath ?? "").replace(/\\/g, "/");
+  const base = normalized.split("/").pop() ?? normalized;
+  const isRealEnvFile = /^\.env(?:\..+)?$/i.test(base) && base.toLowerCase() !== ".env.example";
+  return (
+    isRealEnvFile ||
+    /(^|\/)node_modules\//i.test(normalized) ||
+    /(^|\/)\.next\//i.test(normalized) ||
+    /(^|\/)dist\//i.test(normalized) ||
+    /(^|\/)build\//i.test(normalized) ||
+    /(^|\/)coverage\//i.test(normalized) ||
+    /\.tsbuildinfo$/i.test(normalized) ||
+    /\.log$/i.test(normalized)
+  );
+}
+
+function run() {
 // --- 1. Project configuration ------------------------------------------------
 const config = parseJsonc(read("opencode.jsonc"));
 const allowedTopLevel = new Set([
@@ -279,9 +300,7 @@ const changedPaths = gitRaw(["status", "--porcelain"])
   .split(/\r?\n/)
   .filter(Boolean)
   .map((line) => line.slice(3).replace(/^"|"$/g, ""));
-const forbiddenChanges = changedPaths.filter((filePath) =>
-  /(^|\/)\.env($|\.)|(^|\/)node_modules\/|(^|\/)\.next\/|(^|\/)dist\/|(^|\/)build\/|(^|\/)coverage\/|\.tsbuildinfo$|\.log$/i.test(filePath),
-);
+const forbiddenChanges = changedPaths.filter((filePath) => isForbiddenAutopilotChange(filePath));
 check("no secret or generated files are changed", forbiddenChanges.length === 0, forbiddenChanges.join(", "));
 
 const scenarios = [
@@ -306,3 +325,8 @@ if (failures.length) {
   process.exit(1);
 }
 console.log("\nAll definition, policy, skill, Git-safety and recovery checks passed.");
+}
+
+if (isDirectRun) {
+  run();
+}

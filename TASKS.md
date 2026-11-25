@@ -952,3 +952,34 @@ Validation (local, 2026-11-22, run by the orchestrator after the final edits):
 - `git diff --check` — clean (only cosmetic LF to CRLF notices).
 
 No commit, push, merge or PR was created for this phase.
+
+---
+
+## BCV automatic exchange-rate synchronization (audit/hardening completed, local)
+
+Branch: `features/bcv-exchange-rate` (base `e13fafb`, `origin/main`). No commit, push, PR, merge, remote migration, deployment, or secret change performed. Protected unrelated dirty files preserved: `package.json`, `package-lock.json`, `src/features/payments/components/checkout-payment-form.tsx`, `supabase/.temp/*`, `supabase/.gitignore`, `supabase/config.toml`, `tmp_validate.cjs`.
+
+### Implementation (local, additive)
+- [x] Additive migration `015_bcv_sync_attempts.sql`: `bcv_sync_attempts` status/history table, slot-scoped attempt idempotency key, sanitized error fields, RLS/force RLS, admin SELECT policy, `authenticated` select, `service_role` select/insert only. No client writes.
+- [x] Narrow `register_bcv_rate` replacement in 015: service_role-only automatic registration allowed only when `p_admin_id IS NULL`, source is `automatic:%`, and `p_supersedes_id IS NULL`; manual/admin path still requires active admin via `private.require_active_admin`. Grants remain service_role execute only. No migration 007 edit.
+- [x] Independent worker `supabase/worker/bcv-rate-worker.mjs`: Mon–Fri 09:00/13:00 `America/Caracas` (UTC-4, no host-TZ dependence), no 30-min polling, no overlap, graceful shutdown, timeout, defensive validation, sanitized logs, no OQ-16 coupling, no last-valid-rate replacement on failure.
+- [x] Admin visibility: active rate, manual/automatic source, effective date, last successful retrieval, last attempt/status/error, history. Manual `BcvRateForm` preserved.
+
+### Audit fixes (this pass)
+- [x] **Duplicate rates across slots**: separated keys — slot-scoped attempt idempotency (`buildAttemptIdempotencyKey`) records every attempt independently; rate-registration idempotency (`buildRateIdempotencyKey = bcv-rate:<source>:<effectiveDate>:<rate>`) prevents duplicate `exchange_rates` history rows for same effective date+rate seen in different slots. Regression tests added.
+- [x] **Failure consistency**: if RPC rate registration succeeds but sync-attempt persistence fails, worker returns `attempt_persist_failed`, logs loudly, does not re-register/deactivate; next run protected by rate idempotency. Regression test added.
+- [x] **DB security hardening**: automatic null-admin registration restricted to `automatic:%` sources and cannot supersede rates; non-service-role null-admin still rejected by `private.require_active_admin`. Manual admin path unchanged.
+- [x] **Manual rate coexistence**: when `register_bcv_rate` returns `idempotent: true` and the existing rate was manually registered (source ≠ `automatic:`), worker records a `manual_overridden` attempt instead of treating it as a simple idempotent re-registration. This preserves manual rates and prevents automatic updates from corrupting manual rate state or order snapshots. Regression test added.
+- [ ] **Timezone/restart deep audit**: Caracas schedule uses fixed UTC-4 conversion and weekday boundaries; existing tests cover boundaries. Additional restart/host-TZ-independence review still needed before final signoff.
+
+### Validation (actual)
+- [x] `npx vitest run src/infrastructure/database/bcv-rate-worker.test.ts` — PASS (11 tests).
+- [x] `npx vitest run src/infrastructure/database/bcv-sync-contract.test.ts src/infrastructure/database/bcv-rate-worker.test.ts` — PASS (16 tests).
+- [x] Targeted contract tests for touched BCV/migration contracts — PASS (9 files, 82 tests) during hardening.
+- [x] `npm test` (full) — PASS (37 files, 372 tests).
+- [x] `npm run typecheck` — PASS.
+- [x] `npm run build` — PASS (Next.js 16.4.6 production build).
+- [x] `npm run validate:autopilot` — PASS (235 checks; regex fix for `.env.example`).
+- [x] `git diff --check` — PASS.
+
+Migration status: `015_bcv_sync_attempts.sql` local-only/additive; **not applied remotely**. No deployment/secret/remote env changes.

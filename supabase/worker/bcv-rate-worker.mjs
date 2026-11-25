@@ -17,7 +17,8 @@
  * Local execution (Node 22+):
  *   node --env-file=.env.local supabase/worker/bcv-rate-worker.mjs
  * Required env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
- * Optional env: PORT, BCV_SYNC_FETCH_TIMEOUT_MS, BCV_SYNC_SHUTDOWN_TIMEOUT_MS.
+ * Optional env: PORT, BCV_SYNC_FETCH_TIMEOUT_MS, BCV_SYNC_SHUTDOWN_TIMEOUT_MS,
+ * BCV_SYNC_TEST_INTERVAL_MS (testing only: fixed delay between cycles in ms).
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -72,6 +73,16 @@ function positiveInt(value, fallback) {
   if (value === undefined || value === "") return fallback;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Optional fixed delay for local testing. Returns null when unset, so the
+ * normal Caracas slot schedule remains the default and production is untouched.
+ */
+export function parseTestIntervalMs(value) {
+  if (value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 export function startBcvHealthServer({
@@ -657,6 +668,7 @@ export function createBcvSyncWorker({
   healthPort,
   healthHost = DEFAULT_HEALTH_HOST,
   startHealthServer = startBcvHealthServer,
+  testIntervalMs = null,
 } = {}) {
   const controller = new AbortController();
   let stopping = false;
@@ -695,17 +707,21 @@ export function createBcvSyncWorker({
       timezone: CARACAS_TIME_ZONE,
       slots: SCHEDULE_SLOTS.map((slot) => slot.label),
       shutdown_timeout_ms: shutdownTimeoutMs,
+      test_interval_ms: testIntervalMs,
     });
     try {
       while (!stopping) {
         const slot = getNextSlot(clock());
+        const waitMs = testIntervalMs ?? slot.delayMs;
         logger.info("next_slot_scheduled", {
           slot: slot.slotKey,
           scheduled_at: slot.scheduledAt,
           delay_ms: slot.delayMs,
+          wait_ms: waitMs,
+          test_mode: testIntervalMs !== null,
         });
         try {
-          await sleep(slot.delayMs, controller.signal);
+          await sleep(waitMs, controller.signal);
         } catch (error) {
           if (stopping) break;
           throw error;
@@ -817,6 +833,7 @@ export async function main() {
     shutdownTimeoutMs: positiveInt(process.env.BCV_SYNC_SHUTDOWN_TIMEOUT_MS, DEFAULT_SHUTDOWN_TIMEOUT_MS),
     healthPort: process.env.PORT,
     healthHost: DEFAULT_HEALTH_HOST,
+    testIntervalMs: parseTestIntervalMs(process.env.BCV_SYNC_TEST_INTERVAL_MS),
   });
 
   const shutdown = (signal) => {

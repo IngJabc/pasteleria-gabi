@@ -1,5 +1,6 @@
 "use server";
 
+import { createSupabaseServerClient } from "@/infrastructure/supabase/server";
 import { createSupabaseAdminClient } from "@/infrastructure/supabase/admin";
 import {
   bcvPublicError,
@@ -11,8 +12,9 @@ import {
 
 /**
  * Read-only current rate and the guest-triggered snapshot used by checkout.
- * Guests are authorised only by the private tracking token; no order id or
- * administrator id is accepted from the client.
+ * The rate read uses the RLS-visible, request-bound server client; the guest
+ * snapshot stays privileged. Guests are authorised only by the private
+ * tracking token; no order id or administrator id is accepted from the client.
  */
 
 const genericError = "No se pudo consultar la tasa. Inténtalo de nuevo.";
@@ -44,7 +46,7 @@ export type TrackedSnapshotResult =
   | { ok: false; error: string };
 
 export async function getCurrentBcvRate(): Promise<CurrentRateResult> {
-  const supabase = createSupabaseAdminClient();
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("get_bcv_rate");
   if (error) {
     return { ok: false, error: bcvPublicError(error.message, genericError) };

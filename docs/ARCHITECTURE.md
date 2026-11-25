@@ -111,6 +111,10 @@ Rules:
 - The service-role key is **never** read from client code: `env.server.ts` and
   `admin.ts` import the `server-only` marker, so a client-side import fails at
   build time, and the key is a non-`NEXT_PUBLIC_` variable (never inlined).
+- Read-only RPCs granted to `anon` or `authenticated` use `server.ts`. The read
+  then uses the same Supabase project as the session that displays it, and it
+  does not depend on a privileged credential. Use `admin.ts` only when the RPC
+  or table requires privilege.
 - Database TypeScript types are generated from migrations and all three clients
   use the generated-derived `Database` generic, with a narrow adapter for five
   decimal/null RPC `Args`. No schema is invented.

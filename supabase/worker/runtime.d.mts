@@ -22,6 +22,7 @@ export type RuntimeConfig = {
   slaShutdownTimeoutMs: number;
   bcvFetchTimeoutMs: number;
   bcvShutdownTimeoutMs: number;
+  bcvTestIntervalMs: number | null;
 };
 
 export type SupervisedWorker = {

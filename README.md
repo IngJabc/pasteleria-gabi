@@ -90,6 +90,8 @@ Then fill `.env.local` with the values from the Supabase dashboard.
 | `npm run worker:unified` | Start the unified BCV + receipt-SLA runtime; auto-loads `.env.local` when present |
 | `npm run worker:sla` | Run the OQ-16 SLA worker on a schedule; both npm worker scripts auto-load `.env.local` when present (needs `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; optional `SLA_POLL_MS`/`SLA_SHUTDOWN_TIMEOUT_MS`) |
 
+`npm run worker:unified` also reads `BCV_SYNC_TEST_INTERVAL_MS` from `.env.local`. Set it to `120000` for local 2-minute BCV sync tests, then unset it before deployment.
+
 ### Database types
 
 To regenerate `src/infrastructure/database/database.types.ts` from all nine

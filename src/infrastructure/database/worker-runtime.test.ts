@@ -103,6 +103,12 @@ describe("worker runtime", () => {
     const config = validateRuntimeEnv(runtimeEnv({ SLA_POLL_MS: "60000" }));
     expect(config.slaPollMs).toBe(60000);
     expect(config.port).toBe(0);
+    expect(config.bcvTestIntervalMs).toBeNull();
+
+    const testConfig = validateRuntimeEnv(
+      runtimeEnv({ BCV_SYNC_TEST_INTERVAL_MS: "120000" }),
+    );
+    expect(testConfig.bcvTestIntervalMs).toBe(120000);
   });
 
   it("exposes backward-compatible /healthz and does not trigger workers", async () => {
@@ -264,6 +270,7 @@ describe("worker runtime", () => {
         SLA_SHUTDOWN_TIMEOUT_MS: "2000",
         BCV_SYNC_FETCH_TIMEOUT_MS: "3000",
         BCV_SYNC_SHUTDOWN_TIMEOUT_MS: "4000",
+        BCV_SYNC_TEST_INTERVAL_MS: "120000",
       }),
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       createClientImpl: vi.fn(() => makeSupabaseStub()),
@@ -277,7 +284,11 @@ describe("worker runtime", () => {
     await vi.waitFor(() => expect(slaFactory).toHaveBeenCalled());
 
     const bcvArgs = bcvFactory.mock.calls[0][0] as Record<string, unknown>;
-    expect(bcvArgs).toMatchObject({ fetchTimeoutMs: 3000, shutdownTimeoutMs: 4000 });
+    expect(bcvArgs).toMatchObject({
+      fetchTimeoutMs: 3000,
+      shutdownTimeoutMs: 4000,
+      testIntervalMs: 120000,
+    });
     expect(bcvArgs.healthPort).toBeUndefined();
     expect(bcvArgs.healthHost).toBeUndefined();
     expect(slaFactory.mock.calls[0][0]).toMatchObject({

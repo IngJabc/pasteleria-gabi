@@ -48,6 +48,7 @@ describe("migration 002 contract (static)", () => {
       "012_delivery_quote_post_acceptance_guard.sql",
       "013_quote_guard_helpers_grants.sql",
       "014_product_reviews.sql",
+      "015_bcv_sync_attempts.sql",
     ]);
   });
 

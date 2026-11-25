@@ -22,6 +22,19 @@ import { DeliveryZonesForm } from "@/features/admin/components/settings/delivery
 import { SettingsTabs } from "@/features/admin/components/settings/settings-tabs";
 import { paymentInstructionsSchema } from "@/features/settings/schemas";
 
+function bcvSourceLabel(source: string | null): string {
+  if (!source) return "—";
+  if (source.startsWith("automatic:")) return `Automática (${source.replace("automatic:", "")})`;
+  return `Manual (${source})`;
+}
+
+function bcvSyncStatusLabel(status: "success" | "failure" | "skipped" | "manual_overridden"): string {
+  if (status === "success") return "Exitosa";
+  if (status === "failure") return "Fallida";
+  if (status === "manual_overridden") return "Manual prevalece";
+  return "Omitida";
+}
+
 export const metadata: Metadata = {
   title: "Configuración | Panel administrativo",
   robots: { index: false, follow: false },
@@ -42,6 +55,8 @@ export default async function AdminSettingsPage() {
 
   const businessHours = describeBusinessHours(snapshot.settings.businessHours);
   const currentRate = snapshot.bcvRate;
+  const bcvSync = snapshot.bcvSync;
+  const bcvLastSuccessfulRetrievalAt = snapshot.bcvLastSuccessfulRetrievalAt;
   const rates = rateHistory.ok ? rateHistory.rates : [];
   const parsedPaymentInstructions = paymentInstructionsSchema.safeParse(
     snapshot.settings.paymentInstructions,
@@ -117,11 +132,46 @@ export default async function AdminSettingsPage() {
                           {currentRate.isStale ? "Desactualizada" : "Vigente"}
                         </AdminStatusChip>
                         <span>Observada: {formatDateTime(currentRate.observedAt)}</span>
-                        {currentRate.source ? <span>Origen: {currentRate.source}</span> : null}
+                        <span>Origen: {bcvSourceLabel(currentRate.source)}</span>
                       </div>
                     ) : (
                       <p className="mt-2 text-sm leading-6 text-ink">
                         Registra una tasa para habilitar pagos en VES por Pago Móvil.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-4 rounded-field border border-rose/60 bg-cream px-4 py-3">
+                    <p className="text-eyebrow">Sincronización automática BCV</p>
+                    {bcvSync ? (
+                      <div className="mt-2 space-y-2 text-sm leading-6 text-ink">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <AdminStatusChip
+                            tone={
+                              bcvSync.status === "success"
+                                ? "mint"
+                                : bcvSync.status === "failure"
+                                  ? "rose"
+                                  : bcvSync.status === "manual_overridden"
+                                    ? "lavender"
+                                    : "yellow"
+                            }
+                          >
+                            {bcvSyncStatusLabel(bcvSync.status)}
+                          </AdminStatusChip>
+                          <span>Último intento: {formatDateTime(bcvSync.attemptedAt)}</span>
+                        </div>
+                        <p>Última recuperación exitosa: {bcvLastSuccessfulRetrievalAt ? formatDateTime(bcvLastSuccessfulRetrievalAt) : "—"}</p>
+                        <p>Fecha efectiva: {bcvSync.effectiveDate ?? "—"}</p>
+                        <p>Actualización proveedor: {bcvSync.providerUpdatedAt ? formatDateTime(bcvSync.providerUpdatedAt) : "—"}</p>
+                        <p>Slot: {bcvSync.scheduleSlot}</p>
+                        {bcvSync.errorDetail ? (
+                          <p className="text-pink">Error: {bcvSync.errorDetail}</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm leading-6 text-muted">
+                        Aún no hay intentos de sincronización registrados.
                       </p>
                     )}
                   </div>
@@ -161,7 +211,7 @@ export default async function AdminSettingsPage() {
                               {String(rate.rate_ves_per_usd)}
                             </th>
                             <td>{formatDateTime(rate.observed_at)}</td>
-                            <td>{rate.source ?? "—"}</td>
+                            <td>{bcvSourceLabel(rate.source)}</td>
                             <td>
                               <AdminStatusChip tone={rate.is_active ? "mint" : "lavender"}>
                                 {rate.is_active ? "Activa" : "Inactiva"}

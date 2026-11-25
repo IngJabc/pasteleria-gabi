@@ -305,10 +305,24 @@ earlier.
       inventory or reservations reads them. An admin server action with Zod
       validation writes the singleton; RLS, grants and policies are unchanged.
       No real address or hours were invented.
-- Automated BCV rate lookup with stored history and last-known-rate fallback,
-  reporting its age when the service is unavailable. **Manual rate registration,
-  history and age reporting are now implemented in migration 007 (Phase 5b);
-  the automatic provider lookup / worker remains a separate future item.**
+- [ ] **BCV automatic synchronization (audit/hardening completed, local, not deployed)**
+  on branch `features/bcv-exchange-rate`. Additive migration
+  `015_bcv_sync_attempts.sql` records durable sync attempts/status for admin
+  visibility. Independent worker `supabase/worker/bcv-rate-worker.mjs` runs
+  Mon–Fri 09:00/13:00 `America/Caracas`, fetches BCV Today server-side, validates
+  defensively, registers through existing `register_bcv_rate`, and never
+  replaces/deactivates last valid rate on failure. Manual registration remains
+  intact.
+  - **Audit fixes applied locally:** slot-scoped attempt idempotency
+    (`buildAttemptIdempotencyKey = bcv-sync:<source>:<slot>:<effectiveDate>`)
+    keeps attempts independently recorded while rate idempotency
+    (`buildRateIdempotencyKey = bcv-rate:<source>:<effectiveDate>:<rate>`)
+    prevents duplicate `exchange_rates` history rows for same effective date+rate
+    across slots; attempt-persist-after-register failure is reported as
+    `manual_overridden` without re-registering; automatic null-admin RPC path is
+    restricted to `service_role` + `automatic:%` source + `p_supersedes_id IS NULL`.
+    Manual admin path fully preserved via `private.require_active_admin`. Remaining
+    audit: restart/host-TZ deep check.
 
 ## Developer automation: autonomous OpenCode workflow (complete)
 

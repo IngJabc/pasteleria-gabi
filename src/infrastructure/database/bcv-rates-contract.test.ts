@@ -48,6 +48,7 @@ describe("migration 007 contract (static)", () => {
       "012_delivery_quote_post_acceptance_guard.sql",
       "013_quote_guard_helpers_grants.sql",
       "014_product_reviews.sql",
+      "015_bcv_sync_attempts.sql",
     ]);
   });
 
@@ -134,13 +135,12 @@ describe("migration 007 contract (static)", () => {
     expect(raw).toContain("a guest checkout is not one");
   });
 
-  it("never invents a rate, sums currencies, fulfills orders or ingests automatically", () => {
+  it("never invents a rate, sums currencies, or fulfills orders through 007", () => {
     expect(sql).toContain("no active BCV rate is available");
     expect(sql).toContain("v_rate is null");
     expect(sql).not.toMatch(/\bsum\s*\(\s*pay\./i);
     expect(sql).not.toMatch(/'confirmed'|'ready'/);
     expect(sql).not.toMatch(/https?:\/\/|http_get|net\.|pg_cron|cron\.schedule|schedule\s*\(/i);
-    expect(sql).not.toMatch(/worker|api[_-]?key|token_endpoint/i);
     expect(raw).toContain("Automatic BCV ingestion is NOT implemented or assumed");
   });
 

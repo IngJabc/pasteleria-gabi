@@ -52,6 +52,18 @@ rates, e-mail digesting, outbox delivery, inventory expiry or any other
 feature. All other work listed under "Later / not scheduled" in the roadmap is
 unchanged.
 
+**Amendment (BCV automatic sync only, 2026-11-24):** DECISIONS #1 is narrowly
+amended again to authorize **one dedicated, lightweight Node.js worker** for BCV
+rate synchronization, independent from the OQ-16 SLA worker. Scope: fetch
+`https://bcv.today/api/v1/rate.json` server-side, validate the payload, register
+rates through the existing `register_bcv_rate` service-role RPC, and record
+durable sync attempts for admin visibility. Schedule is fixed to Monday–Friday
+09:00 and 13:00 `America/Caracas` (no 30-minute polling, no host-timezone
+dependency). It has no public trigger, no business-state writes outside
+`exchange_rates`/`bcv_sync_attempts`/audit behavior already covered by RPCs, and
+no impact on OQ-16. This amendment does **not** authorize workers for other
+features.
+
 ## 2. Scaffold with `create-next-app` (Next.js 16.4.6) — status: accepted
 
 **Context:** Phase 0 requires a production-ready baseline.

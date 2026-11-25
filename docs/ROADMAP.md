@@ -394,6 +394,19 @@ migration and rewrites nothing earlier.
     limitation:** sleeping instances can miss fixed Caracas slots and 15-min SLA
     cycles; missed cycles are intentionally not replayed. No Render
     resources/deploy performed.
+  - **Admin current-rate read (local, branch `fix/bcv-rate-admin-display`):**
+    `getCurrentBcvRate()` uses the request-scoped anon/session server client
+    instead of the service-role client. `get_bcv_rate` is granted to
+    `anon`/`authenticated` and reads RLS-visible rate history, so the card uses
+    the same Supabase project as the working sync-status read. Zod validation,
+    metadata mapping and no-invention behavior are unchanged. Deployment and
+    Staging/Production display verification are pending; no secret changed.
+  - **BCV worker test interval (local, uncommitted):** optional
+    `BCV_SYNC_TEST_INTERVAL_MS` overrides the Caracas 09:00/13:00 delay with a
+    fixed millisecond interval. Both the standalone worker and the unified
+    runtime (`npm run worker:unified`) read it from `.env.local`. Unset it in
+    deployed environments so the production schedule, idempotency and
+    missed-slot behavior stay unchanged.
 
 ## Developer automation: autonomous OpenCode workflow (complete)
 

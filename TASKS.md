@@ -1121,3 +1121,45 @@ Limitations / caveats:
 - Render Free instances sleep when idle; while asleep the process cannot run scheduled 09:00/13:00 Caracas slots and `/healthz` will be unavailable until wake. External uptime pings can reduce sleep but are operational, not guaranteed.
 - Free instances may restart at any time; missed slots are intentionally **not** caught up/replayed (existing safe behavior). Next future Caracas slot is scheduled on restart.
 - No Render resources were created/modified; env vars must be configured in Render dashboard (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optional BCV timeouts). Do not commit secrets.
+
+---
+
+## BCV admin rate display fix (local, uncommitted)
+
+Branch: `fix/bcv-rate-admin-display` (from `9d5d23f3932077b96dfe6fb049d3b440ae8968a4`). No commit, push, PR, merge, remote migration, deployment or secret change performed.
+
+Confirmed code-level cause of the discrepancy: the admin card renders `null` as
+“Sin configurar”, and `getCurrentBcvRate()` reached that `null` only through the
+service-role client. The sync-status card uses the working anon/session server
+client. Migration 007 grants `get_bcv_rate` to `anon`, `authenticated` and
+`service_role`, and DECISIONS #33 requires rate reads to stay public and
+least-privilege. A stale or cross-project `SUPABASE_SERVICE_ROLE_KEY` in the web
+runtime is the leading inferred trigger; it was not directly inspected because
+secret values and Vercel access are out of scope. An absent key would make
+`listBcvRates()` throw and fail the whole page, so it does not match the observed
+partial failure. Rate history still uses the service-role client and remains a
+separate diagnostic.
+
+- [x] `getCurrentBcvRate()` now uses `createSupabaseServerClient()`, so the rate read uses the same Supabase project as the authenticated admin page and guest checkout.
+- [x] `applyBcvRateForTracking()` remains service-role-only. RPC name, Zod validation, six mapped metadata fields, null handling and error mapping are unchanged.
+- [x] Regression tests cover the complete automatic rate payload, service-role unavailability, RPC error, malformed payload and admin snapshot mapping. No `get_last_ves_per_usd()` fallback was added.
+- [x] `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` state that public least-privilege RPC reads use the server client.
+- [x] Automated validation completed: focused BCV tests 9/9, full suite 402/402, `tsc --noEmit` clean, build successful, BCV files lint clean. Full `npm run lint` still has pre-existing errors in unrelated files (`image-modal.tsx`, `tmp_validate.cjs`, `quote-acceptance-migration.test.ts`) which are out of scope.
+- [ ] Deploy to Staging, sign in as an active administrator, open `/admin/configuracion`, and confirm the registered rate, `observed_at`, source and stale chip match a read-only `select public.get_bcv_rate();`. Repeat in Production after deployment. No database mutation is required.
+
+### BCV worker test interval mode (local, uncommitted)
+
+Added an optional `BCV_SYNC_TEST_INTERVAL_MS` environment variable for local testing only. When set to a positive integer (milliseconds), the BCV sync worker sleeps that fixed interval between cycles instead of waiting for the next Caracas 09:00/13:00 slot. This lets a developer observe a full sync cycle without waiting until the next scheduled slot. Unset in Staging/Production keeps the production schedule unchanged.
+
+- [x] `supabase/worker/bcv-rate-worker.mjs`: exported `parseTestIntervalMs()`; `createBcvSyncWorker()` accepts `testIntervalMs`; `loop()` uses `testIntervalMs ?? slot.delayMs` and logs both values plus `test_mode`; `main()` reads the env var.
+- [x] `supabase/worker/runtime.mjs` (`npm run worker:unified`) reads `BCV_SYNC_TEST_INTERVAL_MS` and passes it to the BCV worker. An unset value keeps the Caracas 09:00/13:00 schedule unchanged.
+- [x] `.env.example` documents the variable as testing only with a commented example (`120000` = 2 minutes).
+- [x] Tests cover parsing edge cases, interval override in the standalone worker, runtime env parsing and runtime propagation to the BCV worker.
+- [x] No change to production scheduling, idempotency, fetch/validation, SLA, payments, migrations, secrets or Render/Vercel config.
+
+Local test procedure:
+1. Set `BCV_SYNC_TEST_INTERVAL_MS=120000` in `.env.local` or pass it inline to `node --env-file=.env.local ...`.
+2. Start the unified runtime with `npm run worker:unified`, or start the standalone worker with `node --env-file=.env.local supabase/worker/bcv-rate-worker.mjs`.
+3. Wait ~2 minutes (or watch logs for `next_slot_scheduled` with `test_mode: true`).
+4. Verify `bcv_sync_attempts` and the admin **Pagos y BCV** panel reflect the new attempt.
+5. Remove the variable and restart the worker to restore the normal 09:00/13:00 schedule.

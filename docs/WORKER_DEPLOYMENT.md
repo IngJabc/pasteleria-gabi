@@ -40,10 +40,12 @@ Required for both workers (same Supabase project credentials):
 Optional:
 
 - `PORT` — provided by Render; the runtime binds `0.0.0.0:$PORT`.
-- `BCV_SYNC_FETCH_TIMEOUT_MS` — default `15000`.
-- `BCV_SYNC_SHUTDOWN_TIMEOUT_MS` — default `10000`.
-- `SLA_POLL_MS` — default `900000` (15 minutes).
-- `SLA_SHUTDOWN_TIMEOUT_MS` — default `10000`.
+- `BCV_SYNC_FETCH_TIMEOUT_MS`: default `15000`.
+- `BCV_SYNC_SHUTDOWN_TIMEOUT_MS`: default `10000`.
+- `BCV_SYNC_TEST_INTERVAL_MS`: optional local test interval in milliseconds.
+  Leave unset in deployed environments.
+- `SLA_POLL_MS`: default `900000` (15 minutes).
+- `SLA_SHUTDOWN_TIMEOUT_MS`: default `10000`.
 
 Startup fails with a safe, actionable error naming missing variables; values are
 never logged.

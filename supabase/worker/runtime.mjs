@@ -29,6 +29,7 @@ import {
   WORKER_NAME as BCV_WORKER_NAME,
   createBcvSyncWorker,
   createLogger as createBcvLogger,
+  parseTestIntervalMs,
   sanitizeErrorDetail,
 } from "./bcv-rate-worker.mjs";
 
@@ -105,6 +106,9 @@ export function validateRuntimeEnv(env = process.env) {
     env.BCV_SYNC_SHUTDOWN_TIMEOUT_MS,
     BCV_DEFAULT_SHUTDOWN_TIMEOUT_MS,
   );
+  const bcvTestIntervalMs = parseTestIntervalMs(
+    env.BCV_SYNC_TEST_INTERVAL_MS,
+  );
 
   return {
     url: env.NEXT_PUBLIC_SUPABASE_URL,
@@ -115,6 +119,7 @@ export function validateRuntimeEnv(env = process.env) {
     slaShutdownTimeoutMs,
     bcvFetchTimeoutMs,
     bcvShutdownTimeoutMs,
+    bcvTestIntervalMs,
   };
 }
 
@@ -393,6 +398,7 @@ export function createUnifiedWorkerRuntime({
         logger: bcvLogger,
         fetchTimeoutMs: config.bcvFetchTimeoutMs,
         shutdownTimeoutMs: config.bcvShutdownTimeoutMs,
+        testIntervalMs: config.bcvTestIntervalMs,
         // Health server is owned by the unified runtime.
       }),
   });
@@ -450,6 +456,7 @@ export function createUnifiedWorkerRuntime({
       workers: [BCV_WORKER_NAME, SLA_WORKER_NAME],
       bcv_slots: BCV_SCHEDULE_SLOTS.map((slot) => slot.label),
       bcv_timezone: CARACAS_TIME_ZONE,
+      bcv_test_interval_ms: config.bcvTestIntervalMs,
       sla_poll_ms: config.slaPollMs,
     });
     return { port: healthServer?.port ?? null };

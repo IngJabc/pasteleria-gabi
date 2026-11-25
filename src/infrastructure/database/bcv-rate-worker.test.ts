@@ -9,6 +9,7 @@ import {
   getCaracasDateTime,
   getNextScheduleSlot,
   parseIsoTimestamp,
+  parseTestIntervalMs,
   runBcvSyncOnce,
   sanitizeErrorDetail,
   startBcvHealthServer,
@@ -78,6 +79,16 @@ describe("BCV rate worker", () => {
     expect(timeout.ok).toBe(false);
     if (timeout.ok) throw new Error("expected timeout failure");
     expect("errorCode" in timeout ? timeout.errorCode : undefined).toBe("timeout");
+  });
+
+  it("parses the optional test interval without changing the default schedule", () => {
+    expect(parseTestIntervalMs(undefined)).toBeNull();
+    expect(parseTestIntervalMs("")).toBeNull();
+    expect(parseTestIntervalMs("0")).toBeNull();
+    expect(parseTestIntervalMs("-1")).toBeNull();
+    expect(parseTestIntervalMs("abc")).toBeNull();
+    expect(parseTestIntervalMs("1.5")).toBeNull();
+    expect(parseTestIntervalMs("120000")).toBe(120_000);
   });
 
   it("computes next Caracas weekday slots at 09:00/13:00 regardless of host assumptions", () => {
@@ -371,6 +382,32 @@ describe("BCV rate worker", () => {
     await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
     // worker loop would attempt to schedule again; cycle guard should prevent overlap while running
     expect(worker.isRunning()).toBe(true);
+    (resolveRun as unknown as ((value: { ok: boolean; status: string; rateId: number }) => void) | undefined)?.({ ok: true, status: "registered", rateId: 1 });
+    await worker.stop("test");
+  });
+
+  it("uses the test interval instead of the slot delay when configured", async () => {
+    const logger = makeLogger();
+    const sleep = vi.fn(async () => {});
+    let resolveRun: ((value: { ok: boolean; status: string; rateId: number }) => void) | undefined;
+    const runOnce = vi.fn(() => new Promise<{ ok: boolean; status: string; rateId: number }>((resolve) => {
+      resolveRun = resolve as unknown as (value: { ok: boolean; status: string }) => void;
+    }));
+    const now = new Date("2026-11-24T13:00:00Z");
+    const worker = createBcvSyncWorker({
+      rpc: vi.fn(),
+      insertAttempt: vi.fn(),
+      logger,
+      clock: () => now,
+      runOnce: runOnce as unknown as typeof import("../../../supabase/worker/bcv-rate-worker.mjs").runBcvSyncOnce,
+      getNextSlot: () => ({ slotKey: "2026-11-24T09:00", slotDate: "2026-11-24", slotLabel: "09:00", scheduledAt: now.toISOString(), delayMs: 86_400_000 }),
+      sleep,
+      testIntervalMs: 120_000,
+    } as unknown as Parameters<typeof createBcvSyncWorker>[0]);
+
+    worker.start();
+    await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
+    expect(sleep).toHaveBeenCalledWith(120_000, expect.anything());
     (resolveRun as unknown as ((value: { ok: boolean; status: string; rateId: number }) => void) | undefined)?.({ ok: true, status: "registered", rateId: 1 });
     await worker.stop("test");
   });

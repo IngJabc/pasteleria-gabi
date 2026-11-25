@@ -48,6 +48,14 @@ Optional:
 Startup fails with a safe, actionable error naming missing variables; values are
 never logged.
 
+Local npm worker commands (`npm run worker:unified` and `npm run worker:sla`) use
+Node’s `--env-file-if-exists=.env.local`. The file is optional locally, and
+existing process environment values take precedence.
+
+The Render start command remains `node supabase/worker/runtime.mjs`. Production
+uses Render-injected env vars and needs no `.env.local`. The runtime logs no
+secret values.
+
 ## Render configuration (manual)
 
 Use the existing service only:

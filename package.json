@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "validate:autopilot": "node scripts/validate-autopilot.mjs",
+    "worker:unified": "node supabase/worker/runtime.mjs",
     "worker:sla": "node supabase/worker/sla-worker.mjs"
   },
   "dependencies": {

@@ -7,17 +7,18 @@ Consequences*. Superseding a decision should be done by adding a new entry here
 in Phase 1A.1 (reservation lifecycle correction); entries #25–#26 resolve the
 final M3 open questions OQ-16 and OQ-17. #25 is implemented by
 `supabase/migrations/005_receipt_sla_notifications.sql` plus the narrow
-service-role worker in `supabase/worker/sla-worker.mjs` (validated locally,
-not applied remotely or deployed); #26 is implemented in Phase 4 by
-`supabase/migrations/004_quote_acceptance.sql` (validated locally, not applied
-remotely). Decisions #27–#32 record the Payments Module backend added in
-`supabase/migrations/006_payments_and_verification.sql` (local-only; behaviorally
-validated on a disposable local PostgreSQL cluster — details in the final
-implementation report; not applied remotely, deployed, committed or pushed).
-Historical docs call this scope "Phase 4", tasking calls it "Phase 5". Decisions
-#33–#34 resolve OQ-4/OQ-5 and are implemented additively in
-`supabase/migrations/007_bcv_rates_and_rounding.sql` (local-only; validated
-locally; not applied remotely, deployed, committed or pushed). #35 resolves OQ-8
+service-role worker in `supabase/worker/sla-worker.mjs` (validated locally;
+migration applied in Staging and Production; worker deployment pending); #26 is
+implemented in Phase 4 by `supabase/migrations/004_quote_acceptance.sql`
+(validated locally; migration applied in Staging and Production). Decisions
+#27–#32 record the Payments Module backend added in
+`supabase/migrations/006_payments_and_verification.sql` (behaviorally validated on
+a disposable local PostgreSQL cluster, with details in the final implementation
+report; migration applied in Staging and Production). Historical docs call this
+scope "Phase 4", tasking calls it "Phase 5". Decisions #33–#34 resolve OQ-4/OQ-5
+and are implemented additively in
+`supabase/migrations/007_bcv_rates_and_rounding.sql` (validated locally; migration
+applied in Staging and Production). #35 resolves OQ-8
 with `supabase/migrations/009_store_settings_schedule.sql`. #36 records the
 confirmed OQ-11 rule that in-person POS sales paid at the time of sale are
 anonymous; it required no schema change. #37 approves the OQ-12 capability for
@@ -479,9 +480,10 @@ the pending row in the same transaction as the review action. Idempotency is
 enforced in the database by `UNIQUE (receipt_submission_id, admin_id,
 interval_bucket)` with `ON CONFLICT DO NOTHING`; a delayed run creates only the
 **current** 15-minute bucket and never replays missed intervals. No external
-provider/outbox is introduced — the in-app inbox is the delivery. Migration
-005 and `supabase/worker/sla-worker.mjs` are validated locally only; they have
-**not** been applied remotely or deployed.
+provider/outbox is introduced; the in-app inbox is the delivery. Migration 005
+and `supabase/worker/sla-worker.mjs` were validated locally. Migration 005 is
+applied in Staging and Production; worker deployment and runtime validation remain
+pending.
 
 ## 26. Manual delivery quote: acceptance starts a new 20-minute reservation — status: accepted (resolves OQ-17)
 
@@ -525,12 +527,12 @@ reservations → orders, is idempotent, never revives closed reservations and
 writes one PII-free `order.quote_accept` audit row in the same transaction. The server action
 `src/features/orders/accept-quote.ts` validates a 64-hex token and calls only
 that RPC. Validated locally (`npm test`, lint, `tsc`, build; 109 tests);
-migration 004 has **not** been applied remotely. OQ-16 is implemented
+migration 004 is applied in Staging and Production. OQ-16 is implemented
 separately by migration 005 and the narrow worker described in #25.
 
 ---
 
-## Payments Module decisions (migration 006, local only)
+## Payments Module decisions (migration 006, applied in Staging and Production)
 
 ## 27. One payment spine with explicit evidence linkage — status: accepted
 
@@ -676,7 +678,7 @@ administrative actions and write no audit row).
 their VES snapshot. Automatic provider ingestion is a separate future path that
 can reuse `register_bcv_rate` with a machine `source` without a schema change.
 No network call, secret, cron or worker was added. Implemented additively in
-migration 007 (local only).
+migration 007, which is applied in Staging and Production.
 
 **Integration follow-up (same migration 007):** the canonical checkout path is
 `create_online_order_with_bcv`, which invokes the unchanged `create_online_order`
@@ -709,7 +711,7 @@ automatic fulfillment is derived from the VES snapshot.
 374.12 as banker's rounding would give); two identical items are priced from
 the single final total, never by doubling a rounded line. Existing money
 precision is unchanged (USD 10,2 / VES 14,2 / rate 12,4). Implemented additively
-in migration 007 (local only).
+in migration 007, which is applied in Staging and Production.
 
 ## 35. `store_settings.business_hours` weekly schedule contract — status: accepted (resolves OQ-8)
 
@@ -757,7 +759,7 @@ remain accepted 24/7. RLS, policies and grants on `store_settings` are
 unchanged (`anon` keeps public SELECT with no write policy; admins keep ALL).
 The JSONB shape is strict, so future fields require an explicit additive
 migration; this is preferable to silently accepting malformed schedules.
-Implemented locally in migration 009; not applied remotely.
+Implemented locally in migration 009; migration applied in Staging and Production.
 
 ## 36. Anonymous in-person POS sales — status: accepted (resolves OQ-11)
 
@@ -855,10 +857,139 @@ lifetime, generic errors, cross-order isolation, ignored client-supplied
 identifiers and absence of sensitive data. No remote project was contacted.
 
 
+## 40. Admin Notifications — OQ-16 operationalization and Phase 6 general feature — status: proposed (documentation/planning)
+
+**Context:** SPEC §13 requires Supabase Realtime notifications for both admins
+for new orders, receipts, and relevant order/payment updates. Two related but
+distinct objectives exist and must remain clearly separated:
+
+1. **OQ-16 SLA inbox (migration prerequisite complete, activation pending):**
+   migration `005_receipt_sla_notifications.sql` and
+   `supabase/worker/sla-worker.mjs` implement overdue receipt-review notifications.
+   Validated locally; migration applied in Staging and Production; deployment and
+   runtime validation pending.
+2. **Phase 6 General Admin Notifications (architecture defined/planned,
+   implementation pending):** independent in-panel notifications for business
+   events (new order, new/corrected receipt, new review) with Realtime,
+   history, navigation, and read-state controls.
+
+**Amendment (2026-11-24, unified worker hosting):** OQ-16 SLA processing is
+integrated locally into `supabase/worker/runtime.mjs`, which hosts the BCV and SLA
+workers in the **same existing Render Web Service** process. This changes hosting
+topology only: one process/HTTP server/`/healthz`, independent scheduling and
+failure isolation, idempotent shutdown. No new Render service or Background Worker
+is authorized. SLA semantics (24h threshold, 15-min buckets, dedupe key, admin
+fanout, service-role-only RPC, no business-state mutation) and BCV behavior are
+unchanged. Deployment/activation remains pending and is documented in
+`docs/WORKER_DEPLOYMENT.md`.
+
+### Audit findings (repository evidence, 2026-11-24, branch `features/admin-notifications-docs`)
+
+**Implemented (OQ-16):**
+- **Schema/RPC/RLS:** migration 005 creates `receipt_submissions` and
+  `admin_notifications`, immutability trigger, `private.close_pending_receipt_submission`,
+  `approve_receipt_submission`, `process_sla_notifications(p_now timestamptz default null)`,
+  admin SELECT on receipt history, admin SELECT/UPDATE-own on `admin_notifications`;
+  service-role-only EXECUTE grants; dedupe UNIQUE
+  `(receipt_submission_id, admin_id, interval_bucket)` with `ON CONFLICT DO NOTHING`.
+- **Worker:** `supabase/worker/sla-worker.mjs` runs one cycle on startup then every
+  `SLA_POLL_MS` (default 900000 / 15 min), calls only
+  `rpc("process_sla_notifications", { p_now: null })`, avoids overlapping cycles,
+  has structured JSON logs, graceful shutdown, env validation
+  (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; optional
+  `SLA_POLL_MS`, `SLA_SHUTDOWN_TIMEOUT_MS`). `package.json` exposes `worker:sla`.
+- **Admin UI read path:** `src/features/admin/notifications.ts`
+  `getUnreadAdminNotificationCount()` (own unread rows, `null` on error);
+  `src/app/(admin)/admin/(panel)/layout.tsx` renders alerts pill only when count > 0.
+- **Settings inbox:** `src/features/admin/settings-read.ts` provides
+  `listAdminNotifications()` and `markAdminNotificationAsRead()`; settings page
+  displays inbox items. Mark-as-read is wired but not exposed as an end-user control
+  (ROADMAP/TASKS honest-unavailable scope).
+- **Tests:** `receipt-sla-contract.test.ts`, `receipt-sla-migration.test.ts`,
+  `sla-worker.test.ts` cover schema/RLS/dedupe/worker behavior.
+
+**Missing/incomplete for observed notifications:**
+- **Not deployed/activated:** migration 005 is applied in Staging and Production;
+  the worker was validated locally. A standalone SLA worker exists; the local
+  unified runtime now hosts it with the BCV worker in one Render Web Service
+  process, but there is still no deployment or runtime evidence in the repo.
+- **24-hour SLA delay:** `process_sla_notifications` only creates rows for
+  `submitted_at <= v_now - interval '24 hours'`; recent receipts produce no rows.
+- **No Realtime on `admin_notifications`:** migration 008 publishes
+  `orders`, `payments`, `cancellation_requests` only; `admin_notifications` not
+  published. UI has no Realtime subscription for notifications.
+- **UI exposure limited:** alerts pill is count-only in layout; settings page has
+  read-only inbox; mark-as-read action exists but no control exposed; no navigation
+  to related order/payment/review from notification rows; no mark-all-read.
+- **Both-admin visibility depends on runtime data:** RPC fans out to
+  `administrators WHERE is_active`; both admins must be active and have valid
+  sessions. Cannot verify runtime admin rows from repository.
+
+**Root cause (from repository evidence and confirmed migration status):** OQ-16
+notifications have not been observed because the system is **not operationalized**:
+migration 005 is applied in Staging and Production, but `sla-worker.mjs` is not
+deployed or running on a schedule. Secondary code-level limits also prevent a
+full notification experience: 24-hour threshold, no `admin_notifications` Realtime
+publication/subscription, and no exposed mark-as-read/mark-all/read navigation UI.
+Runtime validation still requires worker deployment/logs, active admin rows, and
+overdue pending `receipt_submissions`.
+
+### Decision
+
+- **Keep OQ-16 isolated.** Do not force general business events into the SLA
+  schema/RPC/worker. Preserve migration 005 table/RLS/RPC semantics, dedupe key,
+  24h+15min behavior, service-role-only execution, and "no business state mutation"
+  invariant.
+- **Operationalize OQ-16 as a dedicated track** before/alongside Phase 6. See
+  TASKS "OQ-16 — Operationalization (activation pending)".
+- **Implement Phase 6 General Admin Notifications as a separate feature** with its
+  own data model/event lifecycle, while reusing proven security patterns (admin-only
+  RLS, deterministic dedupe, DB as source of truth, server-side writes).
+- **Do not reuse OQ-16 SLA worker for general events.** A separate write path is
+  required for Phase 6 business events; any worker reuse decision must be explicit
+  and preserve SLA isolation.
+
+### Phase 6 proposed scope (no implementation yet)
+
+- **Recipients:** both active administrators (`administrators.is_active = true`).
+- **Events:** new order, new payment receipt, corrected/resubmitted payment
+  receipt, new customer review.
+- **Behavior:** unread counter, notifications list/history, navigate to related
+  order/payment/review, mark one as read, mark all as read, dedupe/idempotency,
+  realtime updates without page refresh.
+- **Exclusions:** no customer-facing notifications, no email, no WhatsApp, no
+  BCV worker changes, no OQ-16 SLA behavior changes.
+
+### Unresolved decisions (block Phase 6 implementation)
+
+1. **Data model:** extend `admin_notifications` for general events or create a
+   separate general notification table/module while preserving SLA behavior and
+   avoiding ambiguous mixed semantics.
+2. **Event identity/dedupe:** deterministic dedupe key per event type/transition;
+   corrected receipt must not duplicate original-receipt notification semantics;
+   define keys for order creation, payment receipt submission, corrected receipt,
+   and review creation.
+3. **Write path:** DB trigger/RPC/server action consistent with existing domain
+   boundaries; atomic with originating business action where required; no BCV
+   coupling; no SLA RPC overload.
+4. **Realtime:** publication/RLS/replica identity impact for selected table(s);
+   client subscription must reconcile with DB and remain RLS-authorized.
+5. **Read-state model:** per-admin read state for mark-one/mark-all; define
+   whether mark-all is direct RLS update or constrained RPC; define unread count
+   query source.
+6. **Navigation contract:** stable target shape for order/payment/review deep
+   links; avoid leaking PII/tokens; define behavior for deleted/hidden/inaccessible
+   targets.
+
+**Consequences:** No schema/code/UI/config change in this pass. OQ-16 migration
+is applied in Staging and Production; runtime activation and validation remain
+pending. Phase 6 remains planned. Docs capture audit evidence, operationalization
+prerequisites, and blocking decisions.
+
 ## 39. Public product reviews, moderation, and ranking — status: accepted (local implementation)
 
 **Context:** The store needs public product reviews without registration, with optional tracking-token verified reviews, admin moderation, realtime updates, and product ranking.
 
-**Decision:** Implement local-only migration `014_product_reviews.sql` with `product_reviews`, `product_review_aggregates`, private rate-limit ledger, RLS/force RLS, and additive Realtime publication for review tables. Public reads expose only published non-hidden reviews/aggregates for active products. Direct public table writes are revoked; anon receives only safe public review columns, authenticated has table SELECT constrained by RLS (published rows for non-admins, all rows for active admins), and no direct table UPDATE is granted. Submission uses `public.submit_product_review(...)` (SECURITY DEFINER, service_role execute) with server-side validation, advisory-locked submitter-hash rate limiting, server-side tracking-token verification via `get_order_for_tracking`, and DB unique index for one verified review per product per order. Moderation uses `set_product_review_hidden(...)` only, requiring active admin and writing `audit_log` actions `product_review.hide/restore`; hidden reviews remain in DB/admin views but are excluded from public reads and aggregates. Ranking uses Bayesian weighted rating `WR=(v/(v+m))*R+(m/(v+m))*C` with `C=4.0`, `m=5`; products with no published reviews receive no fabricated score.
+**Decision:** Implement additive migration `014_product_reviews.sql` with `product_reviews`, `product_review_aggregates`, private rate-limit ledger, RLS/force RLS, and additive Realtime publication for review tables. Public reads expose only published non-hidden reviews/aggregates for active products. Direct public table writes are revoked; anon receives only safe public review columns, authenticated has table SELECT constrained by RLS (published rows for non-admins, all rows for active admins), and no direct table UPDATE is granted. Submission uses `public.submit_product_review(...)` (SECURITY DEFINER, service_role execute) with server-side validation, advisory-locked submitter-hash rate limiting, server-side tracking-token verification via `get_order_for_tracking`, and DB unique index for one verified review per product per order. Moderation uses `set_product_review_hidden(...)` only, requiring active admin and writing `audit_log` actions `product_review.hide/restore`; hidden reviews remain in DB/admin views but are excluded from public reads and aggregates. Ranking uses Bayesian weighted rating `WR=(v/(v+m))*R+(m/(v+m))*C` with `C=4.0`, `m=5`; products with no published reviews receive no fabricated score.
 
-**Consequences:** Migration 014 is local-only until explicitly applied/verified remotely. Public submission is anonymous and rate-limited but not strong identity-based abuse-proofing. Realtime authorization relies on RLS; clients subscribe/refresh and reconcile. PR/push/remote apply not performed in this session.
+**Consequences:** Migration 014 is applied in Staging and Production. Public submission is anonymous and rate-limited but not strong identity-based abuse-proofing. Realtime authorization relies on RLS; clients subscribe/refresh and reconcile. PR/push was not performed in that session.

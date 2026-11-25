@@ -15,35 +15,37 @@ Supabase project (local ↔ remote synchronized).** The M2 subset (§4.1
 policies, §5 `create_inventory_batch`/`adjust_inventory`/`get_product_stock`
 grants) is implemented in `supabase/migrations/002_inventory_foundation.sql`
 with the same local verification (including anon/non-admin/service-role
-boundaries and the concurrency lock); **not applied remotely yet.** The M3
-subset (§4.1 `orders`/`order_items`/`inventory_reservations`/
+boundaries and the concurrency lock). The M3 subset (§4.1
+`orders`/`order_items`/`inventory_reservations`/
 `cancellation_requests`/`exchange_rates` rows, §4.2 admin-ALL policies with
 the anon SELECT on `exchange_rates`, §5's eight service-role-only order RPCs,
 §6 hashed tracking) is implemented in
 `supabase/migrations/003_orders_and_reservations.sql` with the same local
 verification (PII-free tracking, duplicate-cancellation 23505, RLS and grant
-boundaries, concurrent checkout/consume); **not applied remotely yet.** The
-Phase 4 / M4 subset (§5 service-role RPCs, §6 token-based quote acceptance and
-extended PII-free tracking projection, §8 invariant) is implemented in
-`supabase/migrations/004_quote_acceptance.sql` with local validation; **not
-applied remotely**. The Phase 6 / M6 OQ-16 subset is implemented in
+boundaries, concurrent checkout/consume). The Phase 4 / M4 subset (§5 service-role
+RPCs, §6 token-based quote acceptance and extended PII-free tracking projection,
+§8 invariant) is implemented in
+`supabase/migrations/004_quote_acceptance.sql` with local validation. The Phase 6
+/ M6 OQ-16 subset is implemented in
 `supabase/migrations/005_receipt_sla_notifications.sql` plus the narrow
-`supabase/worker/sla-worker.mjs` (local validation, 143 tests; **not applied
-remotely or deployed**). The Payments Module subset (§4 payments/refunds and
-`payment-receipts` policies, §5 service-role RPCs, §6/§7/§8 token, storage and
-validation invariants) is implemented in
-`supabase/migrations/006_payments_and_verification.sql`: behaviorally validated
-on a disposable local PostgreSQL cluster (details in the final implementation
-report), **local-only; not applied remotely, deployed, committed or pushed**.
+`supabase/worker/sla-worker.mjs` and was validated locally with 143 tests. All
+these migrations are applied in Staging and Production; worker deployment and
+runtime validation remain pending.
+
+The Payments Module subset (§4 payments/refunds and `payment-receipts` policies,
+§5 service-role RPCs, §6/§7/§8 token, storage and validation invariants) is
+implemented in `supabase/migrations/006_payments_and_verification.sql` and
+behaviorally validated on a disposable local PostgreSQL cluster, with details in
+the final implementation report. It is applied in Staging and Production.
 Migrations 001–005 are untouched. Historical docs call this scope "Phase 4",
 tasking calls it "Phase 5"; both names refer to the same backend. The
 Phase 5b / OQ-4 + OQ-5 subset (§4 rate history RLS unchanged, §5 service-role
 rate/snapshot RPCs, §6/§7/§8 admin attribution, idempotency and rounding
 invariants) is implemented additively in
-`supabase/migrations/007_bcv_rates_and_rounding.sql`: behaviorally validated on a
-disposable local PostgreSQL cluster, **local-only; not applied remotely,
-deployed, committed or pushed**. Migrations 001–006 are untouched and 006 remains
-the applied baseline. Policies for later migrations remain proposals, derived from
+`supabase/migrations/007_bcv_rates_and_rounding.sql` and behaviorally validated on
+a disposable local PostgreSQL cluster. It is applied in Staging and Production.
+Migrations 001–006 are untouched and 006 remains the local validation baseline.
+Policies for later migrations remain proposals, derived from
 [`SPEC.md`](../SPEC.md) §16
 and the invariants in
 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) §5. Table/column definitions live in
@@ -510,6 +512,58 @@ upload/verification/SLA/RPC flows are unchanged; no migration was needed.
   truth (SPEC §13); a forged Realtime message cannot change state. No frontend
   subscription was added by this milestone.
 
+### 10.2 OQ-16 SLA notifications — operationalization (activation pending)
+
+- **Current state (repo evidence):** migration 005 implements
+  `receipt_submissions`/`admin_notifications`, RLS/force RLS, service-role-only
+  RPCs, and dedupe `(receipt_submission_id, admin_id, interval_bucket)`. It is
+  applied in Staging and Production. `sla-worker.mjs` runs startup + 15-min cycles
+  calling `process_sla_notifications`; UI reads unread count and settings inbox;
+  mark-as-read action exists but no exposed control. There is no deployment or
+  runtime evidence for the unified worker.
+- **Activation prerequisites:** OQ-16 migration prerequisite complete: migration
+  005 applied in Staging and Production. Update the
+  **existing `pasteleria-bcv-worker` Render Web Service** to the unified runtime
+  start command (`node supabase/worker/runtime.mjs`) with required env vars and
+  service-role RPC access; do not create a new service or Background Worker;
+  verify logs/metrics and no overlapping cycles; validate both active admins
+  receive rows after the 24-hour threshold. Deployment, production activation and
+  runtime validation remain pending.
+- **Unified runtime invariants:** one process, one HTTP server and one
+  `/healthz`; BCV and SLA workers start independently with failure isolation;
+  SIGTERM/SIGINT shutdown is idempotent and coordinates both workers and the
+  server; health requests never trigger worker cycles; startup errors name missing
+  variables only and never log credentials.
+- **Security/ops invariants:** worker keeps service-role key server-only; RPCs
+  remain service-role-only; no business state mutation; no external delivery mark;
+  admin UI continues to gate by `requireActiveAdminId()` and RLS. Monitor cycle
+  failures and stalled runs.
+
+### 10.3 Phase 6 General Admin Notifications (planned, separate)
+
+- **Scope (planned, not implemented):** internal admin-panel notifications for
+  both active administrators. Events: new order, new payment receipt,
+  corrected/resubmitted payment receipt, new customer review. UI behavior:
+  unread counter, list/history, navigation to related order/payment/review, mark
+  one read, mark all read, dedupe/idempotency, realtime updates without refresh.
+- **Isolation from OQ-16:** preserve SLA table/RPC/worker semantics; do not force
+  general events into SLA schema or overload `process_sla_notifications`.
+- **Security invariants:** DB source of truth; RLS enabled/forced; admins read/update
+  only own addressed notifications (or narrowly scoped RPCs); no anon/public/customer
+  access; no client-supplied admin identity trusted; service-role writes only where
+  required and justified.
+- **Realtime:** publication of selected notification rows must preserve RLS
+  boundaries; payloads must not expose data not already readable; subscriptions
+  reconcile with server state and do not authorize mutations.
+- **Idempotency:** deterministic dedupe key per event type/transition, DB-enforced
+  uniqueness; safe across retries, reconnects, multi-tab, worker reruns.
+- **Unresolved decisions (block implementation):** extend vs separate table;
+  per-event dedupe keys; corrected-receipt mapping; write path/atomicity; mark-all-read
+  RLS update vs RPC; publication/replica identity impact; navigation contract;
+  audit/logging expectations.
+- **Exclusions:** no customer-facing notifications, no email, no WhatsApp, no BCV
+  worker changes/integration.
+
 ### 10.1 Store settings schedules (OQ-8)
 
 - The existing `store_settings` singleton keeps its original M1 columns and
@@ -546,9 +600,9 @@ upload/verification/SLA/RPC flows are unchanged; no migration was needed.
 | Protección frente a duplicación de pagos (migration 006) | §8: UNIQUE idempotency keys for payments/refunds, partial unique pending submissions, row/advisory locks; payment status only via server RPCs |
 | Autorización en pagos (migration 006) | §5/§8: session-derived admin id checked by `private.require_active_admin` in every mutating RPC, no `auth.uid()` read, guest access only through the private tracking token |
 
-## 12. Verification plan (when migrations are eventually applied)
+## 12. Verification plan
 
-Design-level checks to run in the migration phase (none applicable yet):
+Design-level checks that apply to the already-applied migrations:
 
 1. `supabase db advisors` (security advisor) after every migration.
 2. Policy tests: as `anon`, attempt `select * from orders` (expect 0 rows/error),
@@ -566,8 +620,8 @@ Design-level checks to run in the migration phase (none applicable yet):
 Payments Module update: the migration 006 subset of this plan (RLS/grants,
 private bucket, service-role RPCs, idempotency and concurrency boundaries) was
 validated behaviorally on a disposable local PostgreSQL cluster; validation
-details are in the final implementation report. Migration 006 is **local-only**
-— no remote apply, deployment, commit or push. OQ-7 was resolved by migration
+details are in the final implementation report. Migration 006 is applied in
+Staging and Production; deployment remains pending. OQ-7 was resolved by migration
 006 itself (non-empty free-text refund method; no value domain invented), and
 OQ-11 was later resolved by confirmed decision #36 (anonymous in-person POS
 sales; no customer fields and no schema change). OQ-12 was resolved by #37/#38
@@ -584,8 +638,8 @@ in the final implementation report. The focused integration follow-up added the
 atomic `create_online_order_with_bcv` path, the Pago Móvil snapshot trigger and
 the table-level snapshot immutability trigger to the same migration 007, with
 behavioral coverage for rollback, concurrent creation/rate changes, every
-payment entry point and all immutability paths. Migration 007 is **local-only** —
-no remote apply, deployment, commit or push. OQ-4 and OQ-5 are resolved by it;
+payment entry point and all immutability paths. Migration 007 is applied in
+Staging and Production; deployment remains pending. OQ-4 and OQ-5 are resolved by it;
 the stale-rate threshold and all other open items above remain open.
 
 Phase 6 Realtime update: migration 008 was validated statically and behaviorally
@@ -593,8 +647,8 @@ on a disposable local PostgreSQL cluster (001–008). The checks cover exact
 publication membership, change-event flags, repeat application without duplicate
 membership, unchanged force-RLS/policies/grants, zero rows for `anon` and
 non-admin `authenticated` clients, retained admin reads, and unchanged
-order/payment/cancellation flows. No Realtime server, remote project, deployment
-or secret was touched; all changes remain local and uncommitted.
+order/payment/cancellation flows. Migration 008 is applied in Staging and
+Production.
 
 Phase 6 OQ-8 update: migration 009 was validated statically and behaviorally on
 a disposable local PostgreSQL cluster (001–009) plus unit tests for the Zod
@@ -602,6 +656,6 @@ contract and server action. The checks cover singleton preservation with a NULL
 schedule, acceptance of closed days and multiple ordered intervals, rejection of
 malformed documents at the database boundary, unchanged anon/non-admin/admin
 write boundaries, and unchanged 24/7 order/reservation creation after setting or
-clearing a schedule. No remote apply, deployment, secret or environment change
-was made; all changes remain local and uncommitted.
+clearing a schedule. Migration 009 is applied in Staging and Production;
+deployment and runtime validation remain pending.
 

@@ -8,6 +8,11 @@ verified — never mark a task done without running its validation.
 > **Phase 4**; the roadmap/tasking label for the same scope is **Phase 5**.
 > Both labels refer to the same work; historical headings are kept as written.
 
+> **Current migration status:** all repository migrations are applied in both
+> Supabase Staging and Supabase Production, including migration 005 and migration
+> 015. Historical branch notes that say a branch did not apply migrations describe
+> that branch only.
+
 ---
 
 ## Phase 0 — Project initialization ✅ (complete)
@@ -188,12 +193,13 @@ single-window repeat-rejection policy · OQ-15 confirm hold-while-under-review �
 OQ-16 how (or whether) the 24-hour admin SLA is enforced.
 
 **Later status:** OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and OQ-17 are all
-**resolved in documentation** — OQ-16 by DECISIONS #25 (notification-only 24 h
+**resolved in documentation**: OQ-16 by DECISIONS #25 (notification-only 24 h
 review SLA) and OQ-17 by DECISIONS #26 (new 20-minute reservation window on
 explicit acceptance of the quoted fee). OQ-17 is **implemented and validated
 locally in Phase 4** (`supabase/migrations/004_quote_acceptance.sql`); OQ-16 is
 **implemented and validated locally in Phase 6** (`005_receipt_sla_notifications.sql`
-plus `supabase/worker/sla-worker.mjs`). Neither is applied remotely.
+plus `supabase/worker/sla-worker.mjs`). Both migrations are applied in Staging
+and Production; worker deployment remains pending.
 
 ---
 
@@ -243,7 +249,8 @@ Implementation order (each migration ships with its RLS policies; design source:
       `get_product_stock`) — implemented in
       `supabase/migrations/002_inventory_foundation.sql`, validated on a
       disposable local PostgreSQL cluster (behavioral + contract tests).
-      **Not applied to any remote project.** Scope notes: `order_id` and sale
+      That branch did not apply migrations; current confirmed status is all
+      migrations applied in Staging and Production. Scope notes: `order_id` and sale
       movements are deferred to M3 (no `orders` table yet);
       `inventory_reservations` and all timing logic (20 min initial / 20 min correction / 24 h admin SLA)
       are **not** here — the reservations FK references `orders`.
@@ -255,7 +262,8 @@ Implementation order (each migration ships with its RLS policies; design source:
       checkout/tracking RPCs — implemented in
       `supabase/migrations/003_orders_and_reservations.sql`, validated on a
       disposable local PostgreSQL cluster (behavioral + contract tests).
-      **Not applied to any remote project.** Scope notes: 8 service-role-only
+      That branch did not apply migrations; current confirmed status is all
+      migrations applied in Staging and Production. Scope notes: 8 service-role-only
       RPCs (`create_online_order`, `hold_order_reservations`,
       `open_order_correction_window`, `release_expired_reservations`,
       `consume_order_reservations`, `release_order_reservations`,
@@ -284,8 +292,8 @@ Implementation order (each migration ships with its RLS policies; design source:
       `004_quote_acceptance.sql`. Migrations 001/002/003 untouched by the M4
       work.
 - [x] **M4 / Phase 4 — OQ-17 quote-acceptance transition:** implemented in
-      `supabase/migrations/004_quote_acceptance.sql` (validated locally, **not
-      applied remotely**): `orders.quote_accepted_at` and
+      `supabase/migrations/004_quote_acceptance.sql` (validated locally;
+      migration applied in Staging and Production): `orders.quote_accepted_at` and
       `inventory_reservations.quote_acceptance_expires_at` (new fixed
       20-minute window copied to the operative `expires_at`), with the
       historical `initial_expires_at` left **immutable**; service-role RPCs
@@ -300,10 +308,11 @@ Implementation order (each migration ships with its RLS policies; design source:
       No admin-retry extension, no change to the correction window or the
       24-hour SLA.
 - [x] **M4 / Phase 4–5 — Payments Module backend:** implemented additively in
-      `supabase/migrations/006_payments_and_verification.sql` (local-only;
-      behaviorally validated on a disposable local PostgreSQL cluster — see the
-      final implementation report for details; **not applied remotely,
-      deployed, committed or pushed**). Adds `public.payments`,
+      `supabase/migrations/006_payments_and_verification.sql` (behaviorally
+      validated on a disposable local PostgreSQL cluster; see the final
+      implementation report for details). The branch did not apply migrations;
+      current confirmed status is all migrations applied in Staging and
+      Production. Adds `public.payments`,
       `public.payment_refunds`, `receipt_submissions.payment_id`, indexes, RLS
       and least-privilege grants, a private `payment-receipts` storage bucket
       with admin SELECT only, audit integration, a `private.require_active_admin`
@@ -343,9 +352,10 @@ Implementation order (each migration ships with its RLS policies; design source:
       direct read; existing upload/verification/SLA behavior is unchanged.
 - [x] **M6 (Phase 6) — OQ-16 recurring SLA notifications:** implemented in
       `supabase/migrations/005_receipt_sla_notifications.sql` and
-      `supabase/worker/sla-worker.mjs` (validated locally, **not applied
-      remotely or deployed**). One immutable `receipt_submissions` row per
-      actual receipt (original + correction), a durable `admin_notifications`
+      `supabase/worker/sla-worker.mjs` (validated locally). Migration 005 is
+      applied in Staging and Production; deployment remains pending. One
+      immutable `receipt_submissions` row per actual receipt (original +
+      correction), a durable `admin_notifications`
       inbox for every active administrator, 24 h + 15 min repeats until the
       specific receipt is approved/rejected, and database-enforced dedupe
       `(receipt_submission_id, admin_id, interval_bucket)` across overlapping
@@ -372,6 +382,85 @@ Implementation order (each migration ships with its RLS policies; design source:
 
 ---
 
+## OQ-16 — Operationalization / activation (migration prerequisite complete, activation pending)
+
+Branch: `features/admin-notifications-docs`. This objective adds the local
+unified worker runtime, tests, configuration and deployment documentation; it does
+not add migrations/SQL or deploy the worker. That branch did not apply migrations;
+current confirmed status is all migrations applied in Staging and Production.
+BCV/SLA business logic and unrelated dirty files remain untouched.
+
+**Status:** migration 005 and `sla-worker.mjs` were validated locally. OQ-16
+migration prerequisite complete: migration 005 applied in Staging and Production.
+The SLA worker is integrated locally with the BCV worker in one Render Web Service
+process. Deployment, production activation and runtime validation remain pending.
+Repository evidence shows unread badge + settings inbox read path exist;
+mark-as-read action exists but no control exposed; no `admin_notifications`
+Realtime publication/subscription. Root cause of no observed notifications:
+worker not deployed or activated, plus limited UI exposure and no Realtime path.
+
+Implementation report (local): 39 files / 396 tests PASS; typecheck PASS; build
+PASS; `git diff --check` PASS.
+
+- [x] **OQ-16 migration prerequisite complete:** migration 005 applied in Staging
+      and Production.
+- [ ] **Verify worker prerequisites/dependencies**: Node/runtime compatible with
+      repo; `@supabase/supabase-js` available; env vars present
+      (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; optional
+      `SLA_POLL_MS`, `SLA_SHUTDOWN_TIMEOUT_MS`); service-role key has RPC execute.
+      Standalone local command remains `node supabase/worker/sla-worker.mjs`
+      (`npm run worker:sla`); the Render start command is the unified runtime.
+- [x] **Unified runtime implemented locally (not deployed):** `supabase/worker/runtime.mjs`
+      starts BCV + OQ-16 in the same process with one `/healthz`. Start command
+      for the existing Render Web Service: `node supabase/worker/runtime.mjs`
+      (`npm run worker:unified`). No new Render service/Background Worker is
+      required. Workers start independently with failure isolation; shutdown is
+      idempotent; health requests never trigger cycles. Start command/env/rollback
+      are documented in `docs/WORKER_DEPLOYMENT.md`. Set env vars/secrets in Render
+      dashboard; deployment/restart is a separate manual step and has not been
+      performed.
+- [ ] **Verify 15-minute cycle and RPC**: confirm startup cycle runs immediately,
+      then every 15 min; structured logs include `worker_started`,
+      `sla_cycle_complete`/`sla_cycle_failed` with metrics; no overlapping cycles;
+      graceful shutdown. RPC returns metrics
+      (`bucket,pending_submissions,due_submissions,active_administrators,notifications_created,processed_at`).
+- [ ] **Validate functional behavior in target env**: create/identify receipt
+      submission pending >24h; confirm both active admins receive
+      `admin_notifications` rows; confirm dedupe on rerun/overlap; confirm unread
+      counter in admin layout; confirm mark-as-read updates own row only; confirm
+      no business state mutation.
+- [ ] **Operational verification/logging/monitoring**: capture Render logs/alerts
+      for failures; define restart policy; monitor cycle failures, zero active
+      admins, missing grants, and stalled cycles; document runbook and rollback
+      (stop worker; no destructive DB rollback required for notifications rows).
+
+## Phase 6 — General Admin Notifications (architecture defined/planned, implementation pending)
+
+Branch: `features/admin-notifications-docs` (documentation only). **Separate from
+OQ-16 SLA inbox and BCV worker.** Do not force general events into SLA schema.
+
+- [ ] **Resolve architecture decisions (DECISIONS #40 blockers)** before any
+      implementation: data model (extend vs separate table), per-event dedupe keys,
+      write path/atomicity, Realtime publication/RLS impact, read-state/mark-all
+      boundary, navigation contract.
+- [ ] **Event coverage**: new order; new payment receipt; corrected/resubmitted
+      payment receipt; new customer review.
+- [ ] **Recipients/visibility**: both active administrators; admin-only RLS;
+      no anon/non-admin/customer access.
+- [ ] **Functional behavior**: unread counter; notification list/history; navigate
+      to related order/payment/review; mark one read; mark all read; dedupe/idempotency;
+      realtime updates without page refresh; DB remains source of truth.
+- [ ] **Security/RLS/Realtime**: enforce per-admin read/update boundaries; Realtime
+      publication only for RLS-safe tables/columns; no PII/token leakage in payloads
+      or navigation targets.
+- [ ] **Idempotency**: deterministic event key per business transition; safe under
+      retries, reconnects, multi-tab, worker reruns.
+- [ ] **Validation criteria (future implementation)**: tests for RLS, dedupe,
+      event generation, realtime reconciliation, mark-one/mark-all, navigation,
+      and no regression to OQ-16 SLA behavior.
+- [ ] **Explicit exclusions**: no customer notifications, no email, no WhatsApp,
+      no BCV worker integration/changes, no OQ-16 semantic changes.
+
 ## Phase 1A.2 — Final OQ resolution ✅ (complete)
 
 Confirmed business rules recorded in `docs/DECISIONS.md` **#25** and **#26**;
@@ -381,7 +470,7 @@ updated accordingly. **At that time** no SQL, migration, application code or
 remote resource was touched; M1/M2/M3 behavior and migration history are
 unchanged. The later M4 and M6 entries above supersede this documentation-only
 status: migration 004 implements OQ-17 and migration 005 plus the narrow worker
-implement OQ-16, both locally only.
+implement OQ-16. Both migrations are applied in Staging and Production.
 
 - [x] **OQ-16 (DECISIONS #25) — resolved as a rule:** 24-hour administrative
       receipt-review SLA from receipt submission; notify the responsible
@@ -396,13 +485,15 @@ implement OQ-16, both locally only.
       and does not modify the 20-minute post-rejection correction window;
       administrative retries never extend it.
 - [x] Documentation-only scope verified **at the time**: no migration 004, no
-      changes to 001/002/003 or to `src/`, no remote apply. Migration 004 and
-      the server action now implement OQ-17 as recorded in the M4 entry above.
+      changes to 001/002/003 or to `src/`, and no remote apply by that task.
+      Migration 004 is applied in Staging and Production; the server action now
+      implements OQ-17 as recorded in the M4 entry above.
 
-**Implementation status (Phase 4 OQ-17 and Phase 6 OQ-16 done locally):**
+**Implementation status (Phase 4 OQ-17 and Phase 6 OQ-16 done locally, migrations applied):**
 
 - [x] **Phase 4 — OQ-17 quote-acceptance transition:** implemented in migration
-      004 and validated locally (not applied remotely). The customer's explicit
+      004 and validated locally; migration applied in Staging and Production.
+      The customer's explicit
       acceptance via the private tracking token writes a new fixed 20-minute
       window in `quote_acceptance_expires_at` and copies it to `expires_at`;
       `initial_expires_at` remains immutable with its creation-time value. The
@@ -419,7 +510,8 @@ implement OQ-16, both locally only.
       `(receipt_submission_id, admin_id, interval_bucket)` with `ON CONFLICT DO
       NOTHING`. No order/status/payment/inventory/reservation writes and no
       external outbox. Validated locally (SQL contract, behavioral RLS/grant
-      tests, worker unit tests); not applied remotely or deployed.
+      tests, worker unit tests). Migration 005 is applied in Staging and
+      Production; deployment remains pending.
 
 Validation (Phase 1B / M1 — executed locally, 2026-11-14):
 
@@ -507,9 +599,9 @@ npm suite (Phase 2 / M2): `npm test` 36/36 passed (3 files: 20 behavioral +
 (`/`, `/admin` static) · `npx tsc --noEmit` exit 0 (run after build).
 
 Explicitly **not** verified locally (requires real Supabase infrastructure):
-PostgREST exposure of the new RPCs, `auth.uid()` from real JWTs, and applying
-migration 002 to the remote project (deliberately deferred — **no remote
-changes were made**).
+PostgREST exposure of the new RPCs and `auth.uid()` from real JWTs. The M2
+branch did not apply migration 002; current confirmed status is all migrations
+applied in Staging and Production.
 
 Validation (Phase 3 / M3 — executed locally, 2026-11-19):
 
@@ -590,7 +682,8 @@ loopback port, torn down afterwards) via
       locks always taken reservations → orders (never the reverse), so
       submissions/rejections/consumptions/cleanups serialise; RLS, policies and
       EXECUTE grants unchanged from the original M3 scope; no sale movement or
-      physical-stock write on rejection or release; no remote apply.
+      physical-stock write on rejection or release; no remote apply by that
+      branch (all migrations are now applied in Staging and Production).
 
 npm suite (Phase 3 / M3, incl. the in-place correction): `npm test` 73/73
 passed at that point (5 files: 26 M3 behavioral + 11 M3 static contract +
@@ -599,9 +692,10 @@ passed at that point (5 files: 26 M3 behavioral + 11 M3 static contract +
 (before and after build).
 
 Explicitly **not** verified locally (requires real Supabase infrastructure):
-PostgREST exposure of the new RPCs, `auth.uid()` from real JWTs, and applying
-migration 003 to the remote project (deliberately deferred — **no remote
-changes were made**; migration 001/002 files untouched, nothing committed).
+PostgREST exposure of the new RPCs and `auth.uid()` from real JWTs. The M3
+branch did not apply migration 003; migration 001/002 files were untouched and
+nothing was committed by that branch. Current confirmed status is all migrations
+applied in Staging and Production.
 
 Validation (Phase 4 / M4 — OQ-17, executed locally, 2026-11-20):
 
@@ -628,25 +722,25 @@ and `npm run build` all passed locally.
 - [x] `npm test` — **109/109 passed** (36 new tests vs. the 73-test M3 suite) ·
       `npm run lint` exit 0 · `npx tsc --noEmit` exit 0 · `npm run build` success.
 
-Explicitly **not** done in Phase 4: migration 004 was **not applied to any
-remote Supabase project**; payment/receipt/tracking **UI** (the payments and
-receipt-storage **backend** is now migration 006, likewise local-only); no
-remote deployment. OQ-16 notifications/scheduler are implemented separately in
-Phase 6 and are likewise local-only.
+Explicitly **not** done in Phase 4: the branch did not apply migration 004;
+payment/receipt/tracking **UI** was not part of that work (the payments and
+receipt-storage **backend** is now migration 006). Current confirmed status is
+all migrations applied in Staging and Production. Deployment remains pending.
+OQ-16 notifications/scheduler are implemented separately in Phase 6.
 
-**Phase 6 / OQ-16 local validation (final):** `npm test` — **143/143 passed**
+**Phase 6 / OQ-16 local validation (final):** `npm test`: **143/143 passed**
 (34 new static/behavioral/worker tests vs. the 109-test Phase 4 suite) ·
 `npm run lint` exit 0 (only two pre-existing OQ-17 warnings) ·
-`npx tsc --noEmit` exit 0 · `npm run build` success. No remote migration,
-deployment, secret change, commit or push.
+`npx tsc --noEmit` exit 0 · `npm run build` success. Migrations are applied in
+Staging and Production; deployment remains pending.
 
-Validation (Phase 5 / Payments Module — migration 006, local only):
+Validation (Phase 5 / Payments Module — migration 006, local validation):
 
 - [x] Migration 006 applies additively on top of 001–005 on a **disposable local
       PostgreSQL cluster**; migrations 001–005 are untouched. Behaviorally
       validated locally; validation details are in the final implementation
-      report. **Not applied to any remote Supabase project, deployed, committed
-      or pushed.**
+      report. Migration 006 is applied in Staging and Production; deployment
+      remains pending.
 - [x] Tables/columns: `payments`, `payment_refunds`,
       `receipt_submissions.payment_id`, indexes (including partial unique keys
       for one pending submission per order and per payment), RLS/forces/grants,
@@ -672,12 +766,12 @@ Validation (Phase 5 / Payments Module — migration 006, local only):
       OQ-4 and OQ-5 were resolved later in Phase 5b (migration 007). No exact
       counts are recorded here; see the final implementation report.
 
-Validation (Phase 5b / OQ-4 + OQ-5 — migration 007, local only):
+Validation (Phase 5b / OQ-4 + OQ-5 — migration 007, local validation):
 
 - [x] Migration 007 applies additively on top of 001–006 on a **disposable local
       PostgreSQL cluster**; migrations 001–006 are untouched and 006 remains the
-      local validation baseline. **Not applied to any remote Supabase project,
-      deployed, committed or pushed.**
+      local validation baseline. Migration 007 is applied in Staging and
+      Production; deployment remains pending.
 - [x] Schema: `exchange_rates.is_active`, `registered_by`, `supersedes_id`,
       `note`, `idempotency_key`, the source/note checks, the unique idempotency
       key, the active-rate lookup index and the `orders.rounding_rule` domain
@@ -732,30 +826,31 @@ Then, per roadmap phase:
       004: one fixed 20-minute acceptance window in
       `quote_acceptance_expires_at`, `initial_expires_at` immutable, no
       admin-retry extension, no impact on the SLA or correction window (details
-      in the M4 entry above).
+      in the M4 entry above). Migration 004 is applied in Staging and Production.
 - [x] **Phase 6 (OQ-16):** migration 005 + `supabase/worker/sla-worker.mjs`
       implement deduplicated in-app SLA notifications for every active
       administrator (24 h + 15 min repeats until approve/reject); no automatic
       cancel or inventory release; narrow worker authorized by DECISIONS #1's
-      amendment. Validated locally, not applied remotely or deployed.
+      amendment. Validated locally; migration applied in Staging and Production;
+      deployment remains pending.
 - [x] **Phase 4/5 (Payments Module):** migration 006 implements the payments
       and verification backend described above (four method/currency pairs,
       per-currency summary, POS cash and refund RPCs, private receipts).
-      Migration 006 remains local-only; the admin POS/refund UI is implemented
-      locally in `/admin` with fail-closed session gating. No remote apply,
-      deployment, commit or push.
+      Migration 006 is applied in Staging and Production; the admin POS/refund UI
+      is implemented locally in `/admin` with fail-closed session gating.
+      Deployment remains pending.
 - [x] **Phase 5b (OQ-4 / OQ-5):** migration 007 adds manual BCV rate history and
       administration, rate lookups with age, atomic per-order snapshots via the
       unchanged `create_online_order`, the `round_half_up` final-total rule,
       Pago Móvil snapshot enforcement and snapshot immutability, with server
-      actions and local tests. Local only; no UI, remote apply, deployment,
-      commit or push.
+      actions and local tests. Migration 007 is applied in Staging and Production;
+      no UI was added and deployment remains pending.
 - [x] **Phase 6 (Realtime publication):** migration 008 adds `orders`,
       `payments` and `cancellation_requests` to `supabase_realtime` idempotently;
       force-RLS, admin-only policies, grants and default replica identity are
       untouched, so Realtime exposes no row a role cannot already read.
       Validated locally (static + behavioral 001–008); no frontend, worker or
-      remote apply.
+      other code change. Migration 008 is applied in Staging and Production.
 - [x] **Phase 6 (OQ-8):** migration 009 defines the `store_settings.business_hours`
       schedule contract (America/Caracas, weekly attention/pickup, closed days,
       multiple intervals) with a CHECK constraint and admin-only Zod action;
@@ -883,13 +978,15 @@ was clean.
 
 Branch: `features/product-reviews` (from `24f52fa`). No commit/push/merge/remote migration/deploy performed.
 
-- [x] Added local-only additive migration `014_product_reviews.sql`: reviews/aggregates/rate-limit ledger, RLS/force RLS, public published-read/admin moderation policies, `submit_product_review` (service_role execute, server-validated token/order verification, one verified review/product/order DB unique index), `set_product_review_hidden` admin RPC with audit log, aggregate trigger, tracking projection adds `product_id`, additive Realtime publication. **Not applied remotely**.
+- [x] Added additive migration `014_product_reviews.sql`: reviews/aggregates/rate-limit ledger, RLS/force RLS, public published-read/admin moderation policies, `submit_product_review` (service_role execute, server-validated token/order verification, one verified review/product/order DB unique index), `set_product_review_hidden` admin RPC with audit log, aggregate trigger, tracking projection adds `product_id`, additive Realtime publication. The branch did not apply migrations; migration 014 is applied in Staging and Production.
 - [x] Storefront: public review form (optional name, required product/rating/comment), homepage section/footer link, product detail/card ratings and published reviews, completed/delivered tracking verified-review entry point. Published non-hidden only; aggregates exclude hidden.
 - [x] Admin `/admin/resenas`: filters, verified badge, hide/restore via session-gated server action + RPC audit log.
 - [x] Realtime: client subscriptions with cleanup/refresh reconciliation; RLS remains authorization boundary. Bayesian ranking `C=4.0, m=5`; no fabricated ratings.
 - [x] Tests/docs: ranking/schema unit tests, migration 014 contract test, migration filename contract updates. `lint`, `typecheck`, `build`, full `vitest`, `validate:autopilot` passed.
 
-Blocked/not claimed: migration 014 local-only; `gh` unavailable so PR needs authenticated alternative/manual; remote Realtime unverified.
+Blocked/not claimed: PR creation needs an authenticated `gh` alternative;
+production Realtime validation remains pending. The migration 014 prerequisite
+is complete.
 
 ## Frontend UX/UI — Storefront implementation (in progress, local)
 
@@ -941,7 +1038,9 @@ Blocked / not invented:
 - [ ] **B2** — administrator emails/Auth provisioning remains an external business dependency; no admin accounts/credentials invented.
 - [ ] **B3** — final catalog/seed/photographs/business content remain external dependencies; realistic empty states used where unavailable.
 
-Scope note: only migration 001 is applied remotely; migrations 002 to 009 are local-only, so many admin reads degrade gracefully against production. No remote migration or deploy was performed.
+Scope note: all repository migrations, including 014 and 015, are applied in
+Staging and Production. Admin reads still show honest unavailable states where
+runtime or business data is missing. No Render deployment was performed.
 
 Validation (local, 2026-11-22, run by the orchestrator after the final edits):
 
@@ -982,7 +1081,9 @@ Branch: `features/bcv-exchange-rate` (base `e13fafb`, `origin/main`). No commit,
 - [x] `npm run validate:autopilot` — PASS (235 checks; regex fix for `.env.example`).
 - [x] `git diff --check` — PASS.
 
-Migration status: `015_bcv_sync_attempts.sql` local-only/additive; **not applied remotely**. No deployment/secret/remote env changes.
+Migration status: `015_bcv_sync_attempts.sql` is applied in Staging and Production.
+BCV migration prerequisites are complete. No deployment, secret or remote env
+changes were made.
 
 ## BCV Render Free Web Service adaptation (local, uncommitted)
 
@@ -1003,7 +1104,9 @@ Branch: `features/bcv-render-web-service` (based on `main`, preserves unrelated 
 - [ ] `npm run build` — not run in this pass (no Next.js app/runtime behavior changed).
 - [ ] `npm run validate:autopilot` — not run in this pass.
 
-Render Free Web Service (exact commands):
+Render Free Web Service commands from that branch (superseded by the unified
+runtime above; use `node supabase/worker/runtime.mjs` on the existing
+`pasteleria-bcv-worker` service):
 - **Build command**: `npm ci`
 - **Start command**: `node supabase/worker/bcv-rate-worker.mjs`
 - **Health check path**: `/healthz` (Render provides `PORT`; service binds `0.0.0.0:$PORT`)

@@ -3,41 +3,37 @@
 Independent e-commerce platform for a Venezuelan bakery selling individual cake
 portions, with a private administrative panel for two administrators.
 
-**Status: Phase 1 complete and applied to production — M2 (inventory
-foundation), M3 (orders & inventory reservations, including the in-place
-reservation/payment-attempt correction), the Phase 4 OQ-17 quote-acceptance
-transition and the Phase 6 OQ-16 receipt-review SLA implemented in
-`supabase/migrations/002_inventory_foundation.sql`,
-`supabase/migrations/003_orders_and_reservations.sql`,
-`supabase/migrations/004_quote_acceptance.sql` and
-`supabase/migrations/005_receipt_sla_notifications.sql` and validated locally
-(143 tests), not yet applied to any remote Supabase project** (see
-[`TASKS.md`](./TASKS.md)). The Payments Module backend is migration
-`006_payments_and_verification.sql` (local-only; not applied remotely or
-deployed); the admin POS cash-sale and refund UI is implemented locally in
-`/admin` behind a fail-closed session gate. The OQ-4/OQ-5 BCV-rate and rounding
-backend is the additive migration
-`007_bcv_rates_and_rounding.sql` (local-only; not applied remotely or deployed;
-migrations 001–006 untouched). M3 reserves stock for 20 minutes, holds it while a
-submitted receipt is reviewed, allows at most two receipts with one 20-minute
-correction window, and auto-cancels on the second rejection. The final open
-questions are resolved in [`docs/DECISIONS.md`](./docs/DECISIONS.md) (#25/#26):
-the 24-hour review SLA now triggers deduplicated in-app notifications for every
-active administrator every 15 minutes until that receipt is approved/rejected
-(no auto-cancel/release), through migration 005 and the dedicated
-`supabase/worker/sla-worker.mjs`; explicit acceptance of a manual delivery
-quote **is implemented in Phase 4**: a private-token, service-role RPC writes
-one fixed 20-minute window in `quote_acceptance_expires_at` and copies it to
-`expires_at`, leaving the historical `initial_expires_at` immutable. Migrations
-004 and 005 have not been applied remotely and the worker is not deployed.
-The public catalog reads active products at request time from the existing
-Supabase tables and renders `/` and `/productos/[slug]`. The admin panel has 11
-locally implemented routes behind a fail-closed session gate: `/admin` (Resumen
-dashboard), orders, receipts, external payments, products, inventory, POS,
-cancellations and settings. The storefront and admin UI work is uncommitted,
-with no PR. Two-admin auth provisioning (B2) and final catalog/seed data (B3)
-remain pending; unavailable admin reads show honest empty states. Other business
-flows remain backend work or placeholders.
+**Status: Phase 1 complete. All repository migrations are applied in both Supabase
+Staging and Supabase Production.** M2 (inventory foundation), M3 (orders and
+inventory reservations, including the in-place reservation/payment-attempt
+correction), the Phase 4 OQ-17 quote-acceptance transition and the Phase 6 OQ-16
+receipt-review SLA are implemented in migrations 002 through 005 and validated
+locally. The implementation report records 39 files / 396 tests PASS, typecheck
+PASS, build PASS and `git diff --check` PASS (see [`TASKS.md`](./TASKS.md)). The
+Payments Module backend is migration `006_payments_and_verification.sql`; the
+admin POS cash-sale and refund UI is implemented locally in `/admin` behind a
+fail-closed session gate. The OQ-4/OQ-5 BCV-rate and rounding backend is the
+additive migration `007_bcv_rates_and_rounding.sql`; migrations 001–006 are
+untouched by it. M3 reserves stock for 20 minutes, holds it while a submitted
+receipt is reviewed, allows at most two receipts with one 20-minute correction
+window, and auto-cancels on the second rejection. The final open questions are
+resolved in [`docs/DECISIONS.md`](./docs/DECISIONS.md) (#25/#26): the 24-hour
+review SLA triggers deduplicated in-app notifications for every active
+administrator every 15 minutes until that receipt is approved/rejected, with no
+auto-cancel or inventory release. Migration 005 is applied, and the SLA worker is
+integrated locally with the BCV worker in `supabase/worker/runtime.mjs`;
+deployment, production activation and runtime validation remain pending. Explicit
+acceptance of a manual delivery quote writes one fixed 20-minute window in
+`quote_acceptance_expires_at` and copies it to `expires_at`, leaving the
+historical `initial_expires_at` immutable. The public catalog reads active
+products at request time from the existing Supabase tables and renders `/` and
+`/productos/[slug]`. The admin panel has 11 locally implemented routes behind a
+fail-closed session gate: `/admin` (Resumen dashboard), orders, receipts,
+external payments, products, inventory, POS, cancellations and settings. The
+storefront and admin UI work is uncommitted, with no PR. Two-admin auth
+provisioning (B2) and final catalog/seed data (B3) remain pending; unavailable
+admin reads show honest empty states. Other business flows remain backend work or
+placeholders.
 The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 
 ## Tech stack
@@ -45,15 +41,17 @@ The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 - Next.js 16 (App Router) + React 19 + TypeScript (strict mode)
 - Tailwind CSS 4
 - Supabase: PostgreSQL, Auth, Storage, Realtime via `@supabase/ssr` (project
-  provisioned; M1 applied)
+  provisioned; all migrations applied in Staging and Production)
 - Zod (validation), Vitest (tests), ESLint (flat config)
 - Deployed on Vercel
 
-Architecture: **modular monolith** — no Express, Strapi or microservices. The
-only scheduled backend component is the narrow OQ-16 receipt-SLA worker
-(`supabase/worker/sla-worker.mjs`), authorized by the OQ-16-only amendment to
-DECISIONS #1; it calls one service-role RPC and has no business-state write
-path. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+Architecture: **modular monolith** — no Express, Strapi or microservices.
+Scheduled backend work is BCV exchange-rate sync and the narrow OQ-16
+receipt-SLA worker (authorized by the OQ-16-only amendment to DECISIONS #1).
+Both are implemented in `supabase/worker/` and hosted by one local unified
+runtime (`supabase/worker/runtime.mjs`) for the existing Render Web Service;
+deployment is pending. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+and [`docs/WORKER_DEPLOYMENT.md`](./docs/WORKER_DEPLOYMENT.md).
 
 ## Prerequisites
 
@@ -136,7 +134,7 @@ pasteleria-online/
 │   └── test/              # Shared testing utilities
 ├── public/                # Static assets
 ├── supabase/
-│   └── migrations/        # SQL migrations (M1 applied remotely; M2 + M3 + M4/OQ-17 local only)
+│   └── migrations/        # SQL migrations (all applied in Staging and Production)
 ├── .env.example           # Documented variable names, no real credentials
 ├── TASKS.md               # Phase checklist (done + next)
 └── SPEC.md                # Functional specification (Spanish)

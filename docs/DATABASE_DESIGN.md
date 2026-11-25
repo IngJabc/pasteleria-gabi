@@ -4,16 +4,17 @@ Proposed initial database architecture for Pastelería Online (Phase 1A design).
 
 **Status:** M1 implemented in
 `supabase/migrations/001_catalog_and_admin_foundation.sql` (renamed from
-`20261114023000_m1_…` when the PR merged) — the tables of §3–§5 and §10.2 plus
-the SPEC-confirmed seeds — validated on a local PostgreSQL cluster with a
-Supabase stub (roles, `auth`, `storage`) and behavioral RLS tests, then
-**applied to the production Supabase project (local ↔ remote synchronized)**.
-M2 implemented in `supabase/migrations/002_inventory_foundation.sql` — §6.1
+`20261114023000_m1_…` when the PR merged) covers the tables of §3–§5 and §10.2
+plus the SPEC-confirmed seeds. It was validated on a local PostgreSQL cluster
+with a Supabase stub (roles, `auth`, `storage`) and behavioral RLS tests, then
+applied to the production Supabase project. All repository migrations are now
+applied in both Supabase Staging and Supabase Production.
+
+M2 implemented in `supabase/migrations/002_inventory_foundation.sql` covers §6.1
 (`inventory_batches`), §6.3 (`inventory_movements`, without `order_id`: deferred
 to M3 with `orders`) and the §11 functions `create_inventory_batch`,
-`adjust_inventory`, `get_product_stock` — same local validation, **not applied
-remotely yet**. M3 implemented in
-`supabase/migrations/003_orders_and_reservations.sql` — §6.2
+`adjust_inventory`, `get_product_stock`. M3 implemented in
+`supabase/migrations/003_orders_and_reservations.sql` covers §6.2
 (`inventory_reservations`), the §6.3 `order_id` column/FK/index, §7.1/§7.2
 (`orders`, `order_items`), §9.1 (`cancellation_requests`), §10.1
 (`exchange_rates`) and the §11 functions `create_online_order`,
@@ -21,33 +22,36 @@ remotely yet**. M3 implemented in
 `release_expired_reservations`, `consume_order_reservations`,
 `release_order_reservations`, `get_order_for_tracking`,
 `request_order_cancellation`, plus the reservations-aware replacement of
-`get_product_stock` (design §11 upgrade path) — same local validation (69
-tests), **not applied remotely yet**. Phase 4 / M4 implemented the OQ-17
-transition in `supabase/migrations/004_quote_acceptance.sql`: the two new
-nullable columns, the four-case `expires_at` invariant (§6.2), the two new
-service-role RPCs and the extended PII-free tracking projection (§11) —
-validated locally, **not applied remotely**, with migrations 001–004 untouched.
-OQ-16 is now implemented additively by migration 005 plus a narrow scheduled
-worker (validated locally, 143 tests total, **not applied remotely/deployed**).
+`get_product_stock` (design §11 upgrade path). Both migrations passed the same
+local validation, and both are applied in Staging and Production.
+
+Phase 4 / M4 implemented the OQ-17 transition in
+`supabase/migrations/004_quote_acceptance.sql`: the two new nullable columns, the
+four-case `expires_at` invariant (§6.2), the two new service-role RPCs and the
+extended PII-free tracking projection (§11). It was validated locally and is
+applied in Staging and Production, with migrations 001–004 untouched. OQ-16 is
+implemented additively by migration 005 plus a narrow scheduled worker and was
+validated locally with 143 tests total. Migration 005 is applied in Staging and
+Production; worker deployment remains pending.
+
 The **Payments Module** backend is implemented additively in
 `supabase/migrations/006_payments_and_verification.sql`: §8 (`payments`,
 `payment_refunds`, `receipt_submissions.payment_id`), the indexes/RLS/grants, the
 private `payment-receipts` bucket, audit integration and the §11 service-role
-RPCs — behaviorally validated on a disposable local PostgreSQL cluster
-(validation details in the final implementation report), **local-only; not
-applied remotely, deployed, committed or pushed**. Migrations 001–005 are
-untouched. This work is called "Phase 4" in older docs and "Phase 5" in tasking;
-both labels refer to the same payments-module scope. Migration
-`007_bcv_rates_and_rounding.sql` subsequently adds the exchange-rate write path
-(§10.1 — OQ-4) and the rounding rule (OQ-5) as an **additive** change; 006 remains
-the applied baseline and 007 rewrites nothing earlier. Migration
-`008_realtime_publication.sql` then publishes three existing tables to Supabase
-Realtime additively (§11 status below); it changes no policy, grant or table.
-Migration `009_store_settings_schedule.sql` defines the OQ-8 schedule contract
-on the existing `store_settings` singleton (§4.1) with a CHECK constraint and
-server-side validation; it adds no table, column, seed or write permission.
-The checkout/payment/tracking **UI** and the remaining §11 functions of later
-phases stay design only. Every
+RPCs. It was behaviorally validated on a disposable local PostgreSQL cluster,
+with details in the final implementation report, and is applied in Staging and
+Production. Migrations 001–005 are untouched. This work is called "Phase 4" in
+older docs and "Phase 5" in tasking; both labels refer to the same
+payments-module scope. Migration `007_bcv_rates_and_rounding.sql` subsequently
+adds the exchange-rate write path (§10.1, OQ-4) and the rounding rule (OQ-5) as
+an **additive** change; 006 remains the local validation baseline and 007
+rewrites nothing earlier. Migration `008_realtime_publication.sql` then publishes
+three existing tables to Supabase Realtime additively (§11 status below) and
+changes no policy, grant or table. Migration `009_store_settings_schedule.sql`
+defines the OQ-8 schedule contract on the existing `store_settings` singleton
+(§4.1) with a CHECK constraint and server-side validation; it adds no table,
+column, seed or write permission. The checkout/payment/tracking **UI** and the
+remaining §11 functions of later phases stay design only. Every
 table below is a
 proposal derived from
 [`SPEC.md`](../SPEC.md); where the spec leaves a rule undefined, this document
@@ -371,8 +375,9 @@ invariant below, two new RPCs, the extended tracking projection and an index on
 change migrations 001–003. Migration 005 later adds the OQ-16 SLA tables and
 RPCs without changing 001–004. OQ-13 (quote case), OQ-14, OQ-15, OQ-16 and
 OQ-17 are all **resolved in documentation**; OQ-17 is implemented locally in
-migration 004 and OQ-16 in migration 005 plus the dedicated worker, both
-**not applied remotely** (see `TASKS.md`/`docs/ROADMAP.md`).
+migration 004 and OQ-16 in migration 005 plus the dedicated worker. Both
+migrations are applied in Staging and Production; worker deployment remains
+pending (see `TASKS.md`/`docs/ROADMAP.md`).
 
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
@@ -453,9 +458,9 @@ migration 004 and OQ-16 in migration 005 plus the dedicated worker, both
 | --- | --- | --- | --- |
 | Online order created | FIFO batches allocated; `expires_at = created_at + 20 min`; manual-quote deliveries created HELD (`expires_at = NULL`) | — | `pending` |
 | Manual quote pending (OQ-17, M3 behavior kept by M4) | stays HELD (`expires_at = NULL`): no automatic expiration | — | `pending` |
-| Customer **explicitly accepts** quoted fee (OQ-17 — **implemented in migration 004**, local only) | a NEW fixed 20-minute window is written once in `quote_acceptance_expires_at = expires_at = acceptance_time + 20 min`; the historical `initial_expires_at` is **immutable**, admin retries never extend the new window, and a correction window (if already set) keeps precedence; independent of the SLA | — | `pending` |
+| Customer **explicitly accepts** quoted fee (OQ-17, implemented in migration 004, applied in Staging and Production) | a NEW fixed 20-minute window is written once in `quote_acceptance_expires_at = expires_at = acceptance_time + 20 min`; the historical `initial_expires_at` is **immutable**, admin retries never extend the new window, and a correction window (if already set) keeps precedence; independent of the SLA | — | `pending` |
 | Receipt #1 submitted | held: `expires_at = NULL`; `receipt_attempts` 0 → 1 | `pending` → `in_review` | `pending` |
-| 24-hour review SLA exceeded (OQ-16 — **implemented in migration 005**, local only) | **no change at all**: no cancel, no release, no deadline change | one durable in-app notification per active administrator per 15-min interval until that submission is approved/rejected; dedupe by `(receipt_submission_id, admin_id, interval_bucket)` | `pending` (unchanged) |
+| 24-hour review SLA exceeded (OQ-16, implemented in migration 005, applied in Staging and Production) | **no change at all**: no cancel, no release, no deadline change | one durable in-app notification per active administrator per 15-min interval until that submission is approved/rejected; dedupe by `(receipt_submission_id, admin_id, interval_bucket)` | `pending` (unchanged) |
 | Receipt #1 **rejected** | ONE 20-minute window opens: `expires_at = correction_window_ends_at = rejection_time + 20 min`; **no inventory released**; attempts stay 1 | `rejected` | stays `pending` (SPEC §10: order status independent of payment status) |
 | Receipt #2 (correction) submitted inside the window, held during review | held again (`expires_at = NULL`); attempts 1 → 2; window **not** re-armed | new/updated component `pending`/`in_review` | `pending` |
 | Receipt #2 **rejected** | automatic cancel: all active reservations `released` + `closed_at` (no movement, no stock change); availability restored once | final `rejected` | → `canceled` automatically |
@@ -472,12 +477,31 @@ deadline for ordinary orders), the separate fixed 20-minute
 `quote_acceptance_expires_at` window for manual-quote orders (migration 004),
 the separate 20-minute correction window after the first rejection, and the
 24-hour review SLA, which only emits notifications. The OQ-17 row is now
-**implemented in migration 004** (validated locally, not applied remotely);
-both OQ-16 and OQ-17 rows are now implemented by migrations 005 and 004
-respectively (local only). No payment or tracking UI was added with either
-work.
+**implemented in migration 004** and validated locally; both OQ-16 and OQ-17
+rows are now implemented by migrations 005 and 004 respectively, and both
+migrations are applied in Staging and Production. No payment or tracking UI was
+added with either work.
 
 #### Receipt submissions and administrator notifications (OQ-16, migration 005)
+
+> **Status audit (2026-11-24):** OQ-16 schema/RPC/RLS/worker/UI read paths are
+> implemented locally, and migration 005 is applied in Staging and Production.
+> The unified worker is not deployed or activated, and production runtime
+> validation remains pending. No `admin_notifications` Realtime publication
+> exists (008 covers orders/payments/cancellation_requests only). Settings inbox
+> is read-only; mark-as-read action exists but is not exposed as a control. Those
+> gaps explain why notifications may not have been observed in target environments.
+>
+> **Phase 6 General Admin Notifications (documentation/planning, not implemented):**
+> Keep OQ-16 SLA schema/behavior isolated. General events (new order, new payment
+> receipt, corrected/resubmitted receipt, new customer review) require a separate
+> data model/event lifecycle decision before implementation. Do not overload SLA
+> dedupe `(receipt_submission_id, admin_id, interval_bucket)` or
+> `process_sla_notifications` semantics for general business events. Unresolved:
+> extend `admin_notifications` with careful backward-compatible generalization vs
+> separate general table; per-event dedupe keys; write path/atomicity; Realtime
+> publication/RLS impact; mark-all-read model; navigation target contract. No
+> schema change is made by this documentation pass.
 
 | Table | Column | Type | Null | Notes |
 | --- | --- | --- | --- | --- |
@@ -671,7 +695,7 @@ changes when the catalog changes (SPEC §4 requires historical product prices).
 rows, possibly in different currencies, may belong to one order (combined
 payments), and each is verified individually. A receipt is evidence, never
 automatic confirmation (SPEC §5); verification is an explicit, admin-attributed
-state change. **Implemented in migration 006** (local only, additive; no UI).
+state change. **Implemented in migration 006** (additive; no UI; applied in Staging and Production).
 
 | Column | Type | Null | Notes |
 | --- | --- | --- | --- |
@@ -740,7 +764,7 @@ payment is never edited beyond its lifecycle `status`.
   (SPEC §12 requires the field, not its value domain) — and no value list is
   invented.
 - **Indexes:** `payment_refunds_payment_id_idx`, `payment_refunds_admin_id_idx`.
-- **Status (migration 006, local only):** append-only rows written by the
+- **Status (migration 006, applied in Staging and Production):** append-only rows written by the
   `record_refund` service-role RPC (advisory lock + UNIQUE idempotency key,
   over-refund blocked); the original payment row is never rewritten beyond its
   lifecycle `status`. Audit rows use `refund.create`.
@@ -879,7 +903,7 @@ No table duplicates another table's state. Everything derived is computed:
 | `record_refund(p_payment_id, p_amount, p_method, p_reason, p_admin_id, p_idempotency_key)` | function | service role only | migration 006: append-only `payment_refunds` row (currency copied from the payment, non-empty free-text method — OQ-7 resolved by migration 006), over-refund blocked, `refunded_partial`/`refunded_full` status and `refund.create` audit; advisory lock + UNIQUE idempotency key |
 | `get_order_payment_summary(p_order_id)` | function (read model) | authenticated admins and service role; anon revoked | migration 006 per-currency read model: approved/pending/in_review/rejected/refunded amounts and payment counts; no cross-currency arithmetic. This RPC implements the earlier `order_payment_summary` view sketch (no view is created) |
 
-**Implemented mechanism (decision #26 — Phase 4 / migration 004, local only):**
+**Implemented mechanism (decision #26, Phase 4 / migration 004, applied in Staging and Production):**
 
 - **Quote-acceptance transition:** the server action validates the private
   64-hex tracking token and calls the service-role-only
@@ -890,10 +914,10 @@ No table duplicates another table's state. Everything derived is computed:
   It ignores administrative retries, leaves the 24-hour review SLA and the
   correction window untouched, is idempotent under repeats (no revival of
   closed reservations), and writes `order.quote_accept` audit data with no PII
-  in the same transaction. No client write path and no remote apply.
+  in the same transaction. No client write path; migration 004 is applied in Staging and Production.
 
-**Implemented mechanism (decision #25 — Phase 6, migration 005 + worker; local
-only):**
+**Implemented mechanism (decision #25, Phase 6, migration 005 + worker; migration
+applied in Staging and Production):**
 
 - `public.process_sla_notifications(p_now timestamptz default null)` —
   service-role-only, `VOLATILE`, `SECURITY INVOKER`, pinned `search_path`.
@@ -917,7 +941,7 @@ only):**
   wait. No external provider/outbox is configured: the in-app inbox is the
   delivery.
 
-**Implemented mechanism (Payments Module — migration 006, local only):**
+**Implemented mechanism (Payments Module, migration 006, applied in Staging and Production):**
 
 - All new mutations are service-role RPCs; the admin id is **never**
   client-supplied as authorization. The server action verifies the session with
@@ -963,7 +987,7 @@ replica identity is retained: every table has a primary key and the policies
 depend only on `private.is_admin()`, not on row values, so PK-only old tuples
 are sufficient to authorize UPDATE/DELETE events; `REPLICA IDENTITY FULL` is
 not necessary. No frontend subscription, policy, grant or existing object was
-changed, and the migration is local-only.
+changed, and the migration is applied in Staging and Production.
 
 ## 12. Status value mapping (SPEC Spanish → stored English)
 
@@ -1018,8 +1042,8 @@ Nothing blocks adding made-to-order whole cakes later:
 | OQ-13 | Does the 20-minute initial reservation clock apply to orders that never upload a receipt (cash on delivery) or that wait for a manual delivery quote (SPEC §6/§8)? | **Resolved by the confirmed M3 rules:** quote-pending deliveries are created held (`expires_at = NULL`) and keep the inventory reserved while the quote is confirmed; cash-on-delivery orders keep the plain 20-minute initial clock. The follow-up sub-question was recorded as **OQ-17** and is now resolved by DECISIONS #26 (new 20-minute window on explicit fee acceptance) |
 | OQ-14 | Repeat rejection policy and the number of allowed receipts | **Resolved by the confirmed M3 rules:** at most two receipts total (original + one correction), the single correction window is 20 minutes and never extended by repeated rejections, and a second rejection auto-cancels the order and releases all reservations. Implemented in migration 003 (`orders.receipt_attempts`, `open_order_correction_window`) |
 | OQ-15 | Confirm the hold rule: a submitted receipt awaiting verification suspends the reservation deadline (`expires_at = NULL`) until an administrator acts | **Resolved by the confirmed M3 rules:** migration 003's `hold_order_reservations` suspends the deadline and counts the submission (idempotent on repeats); the receipt stays held throughout admin review |
-| OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved (DECISIONS #25) and implemented in Phase 6** by migration 005 + `supabase/worker/sla-worker.mjs` (validated locally, not applied remotely/deployed): each receipt submission starts its own 24-hour clock; every active administrator receives a durable in-app notification on the first worker run after the deadline, repeated every 15 minutes until that submission is approved/rejected; dedupe key `(receipt_submission_id, admin_id, interval_bucket)`. **Never** auto-cancels the order or releases inventory; no change to M3/M4 status or reservation rules |
-| OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally, not applied remotely): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
+| OQ-16 | Enforcement of the 24-hour administrator deadline (SPEC §14): dashboard warning only (proposed), or automatic order expiry? | **Resolved (DECISIONS #25) and implemented in Phase 6** by migration 005 + `supabase/worker/sla-worker.mjs` (validated locally; migration applied in Staging and Production; worker deployment pending): each receipt submission starts its own 24-hour clock; every active administrator receives a durable in-app notification on the first worker run after the deadline, repeated every 15 minutes until that submission is approved/rejected; dedupe key `(receipt_submission_id, admin_id, interval_bucket)`. **Never** auto-cancels the order or releases inventory; no change to M3/M4 status or reservation rules |
+| OQ-17 | When exactly does the 20-minute countdown start for an order whose manual delivery quote was accepted? | **Resolved (DECISIONS #26) and implemented in Phase 4** (`004_quote_acceptance.sql`, validated locally; migration applied in Staging and Production): a NEW fixed 20-minute window is written once in `inventory_reservations.quote_acceptance_expires_at` and copied to `expires_at`; `initial_expires_at` stays **immutable** with its creation-time value and is never re-armed. It is neither the 24-hour review SLA nor the 20-minute rejection-correction window, and admin retries never extend it. Migration 003 deliberately encodes no rule and is unchanged |
 
 **Still open after migrations 007 and 009:** the specific Binance
 identifier/receipt data and modality details (SPEC §19) and the

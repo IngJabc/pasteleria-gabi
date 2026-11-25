@@ -75,9 +75,10 @@ src/app/
   `requireActiveAdminId()`; it uses the session client for RLS tables and the
   service-role client only for `get_product_stock`, returning graceful Spanish
   `unavailable` results without raw database errors.
-- Two-admin auth provisioning remains pending (B2). Only migration 001 is
-  applied remotely; migrations 002 to 009 are local-only, so many admin reads
-  degrade gracefully against production.
+- Two-admin auth provisioning remains pending (B2). All repository migrations
+  are applied in Staging and Production, including migration 005 and migration
+  015; deployment of the unified worker is pending. Admin reads still show
+  honest unavailable states where runtime or business data is missing.
 
 Route map (the Phase column records the original roadmap phase):
 
@@ -118,6 +119,25 @@ Rules:
   idempotent (SPEC §8), executed from the server.
 - Supabase Realtime (admin notifications) and Storage (public product photos,
   private receipts) plug into the same layer in later phases.
+- **Unified worker runtime (implemented locally, deployment pending):**
+  `supabase/worker/runtime.mjs` (`npm run worker:unified`) starts the BCV
+  exchange-rate worker and the OQ-16 receipt-SLA worker in the **same**
+  Render Web Service process. The runtime owns the single `node:http` health
+  server and `/healthz`; each worker keeps its own schedule and lifecycle.
+  A supervisor restarts an unexpectedly failed worker without stopping the other.
+  Shutdown is idempotent and coordinates both workers and the HTTP server.
+  Deployment/activation is pending; manual Render steps are documented in
+  `docs/WORKER_DEPLOYMENT.md`.
+- **OQ-16 SLA inbox:** `admin_notifications` + `receipt_submissions` (migration
+  005) and `supabase/worker/sla-worker.mjs` provide overdue receipt-review
+  notifications. Runtime integration does not change SLA semantics. OQ-16
+  migration prerequisite complete: migration 005 applied in Staging and
+  Production. Deployment and runtime validation remain pending;
+  `admin_notifications` Realtime publication is not part of this task.
+- **Phase 6 General Admin Notifications (planned, separate):** independent
+  in-panel event notifications (new order, new/corrected receipt, new review) with
+  history/navigation/read/read-all/realtime. Must keep OQ-16 SLA table/RPC/worker
+  isolated; do not force general events into SLA schema. See DECISIONS #40.
 
 ### Public catalog reads
 

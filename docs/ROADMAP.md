@@ -6,6 +6,11 @@ before its phase starts.
 
 Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
+> **Current migration status:** all repository migrations are applied in both
+> Supabase Staging and Supabase Production, including migration 005 and migration
+> 015. Branch notes that say a branch did not apply migrations describe that
+> branch only.
+
 > **Payments Module naming:** `supabase/migrations/006_payments_and_verification.sql`
 > is the Payments Module backend. Historical roadmap headings call this scope
 > **Phase 4**; tasking calls it **Phase 5**. Both labels refer to the same
@@ -57,8 +62,9 @@ change. Admin auth, admin CRUD and the catalog/product seed remain pending.
 `supabase/migrations/002_inventory_foundation.sql`: `inventory_batches`,
 `inventory_movements` (append-only, `order_id` added by M3 together with `orders`),
 RLS, and the `create_inventory_batch` / `adjust_inventory` / `get_product_stock`
-RPCs, validated on a local PostgreSQL cluster (36 tests). **Not applied
-remotely yet.** Reservations (§6.2), checkout-time stock deduction, sale
+RPCs, validated on a local PostgreSQL cluster (36 tests). That branch did not
+apply migrations; current confirmed status is all migrations applied in Staging
+and Production. Reservations (§6.2), checkout-time stock deduction, sale
 movements and the 20-minute timing (initial deadline + single correction
 window) arrived with **M3** (migration 002 itself is unchanged); the 24-hour
 administrative review SLA remains notification-only and is deliberately not a
@@ -87,15 +93,16 @@ deadlock-free FIFO reservation, receipt hold with a two-receipt counter, single
 20-minute correction window, automatic cancel + release on the second rejection,
 lazy expiry, consume → `sale` movement, release, PII-free tracking, guest
 cancellation requests), validated on a local PostgreSQL cluster (73 tests total
-at that point, 109 after Phase 4/M4 incl. M1/M2). **Not applied remotely yet.**
-The guest checkout / tracking / cancellation **UI** and the Phase 4 payment
-workflow remain to do. OQ-13 (quote case), OQ-14, OQ-15, **OQ-16 and OQ-17 are
-all resolved in documentation** (DECISIONS #24–#26). OQ-17 is **implemented in
-Phase 4** (`supabase/migrations/004_quote_acceptance.sql`, local only): a new
-fixed 20-minute acceptance window in `quote_acceptance_expires_at`, with
+at that point, 109 after Phase 4/M4 incl. M1/M2). That branch did not apply
+migrations; current confirmed status is all migrations applied in Staging and
+Production. The guest checkout / tracking / cancellation **UI** and the Phase 4
+payment workflow remain to do. OQ-13 (quote case), OQ-14, OQ-15, **OQ-16 and
+OQ-17 are all resolved in documentation** (DECISIONS #24–#26). OQ-17 is
+**implemented in Phase 4** (`supabase/migrations/004_quote_acceptance.sql`): a
+new fixed 20-minute acceptance window in `quote_acceptance_expires_at`, with
 `initial_expires_at` immutable. OQ-16 is **implemented in Phase 6** by migration
-005 and the dedicated SLA worker (also local only). Neither changes M1/M2/M3 or
-their migrations.
+005 and the dedicated SLA worker. Both migrations are applied in Staging and
+Production. Neither changes M1/M2/M3 or their migrations.
 
 - Guest checkout (no mandatory registration): customer name, WhatsApp phone,
   delivery/pickup, address and references, optional instructions.
@@ -105,8 +112,8 @@ their migrations.
   manual quote). While the quote is pending the reservation is held with no
   automatic expiry (OQ-13); the customer's explicit acceptance of the quoted fee
   starts a new fixed 20-minute initial reservation window (OQ-17 / DECISIONS
-  #26) — implemented in Phase 4 by migration 004 (local only), with `initial_expires_at`
-   left immutable.
+  #26), implemented in Phase 4 by migration 004, which is applied in Staging and
+  Production, with `initial_expires_at` left immutable.
 - Order entity with private tracking link (random token, hash stored) so
   customers can follow their order without an account; cancellation request from
   the tracking page.
@@ -115,13 +122,13 @@ their migrations.
 
 **Progress:** the OQ-17 quote-acceptance transition is implemented in
 `supabase/migrations/004_quote_acceptance.sql` and validated locally (109 tests
-total); **not applied to any remote Supabase project**. The Payments Module
-backend is implemented additively in
-`supabase/migrations/006_payments_and_verification.sql` (local-only; behaviorally
-validated on a disposable local PostgreSQL cluster — validation details are in
-the final implementation report). No payment/receipt UI is included; migrations
-001–005 are untouched. **Not applied remotely, deployed, committed or pushed.**
-OQ-4/OQ-5 are implemented additively in migration 007 (Phase 5b below).
+total). The Payments Module backend is implemented additively in
+`supabase/migrations/006_payments_and_verification.sql` and behaviorally validated
+on a disposable local PostgreSQL cluster; validation details are in the final
+implementation report. No payment/receipt UI is included; migrations 001–005 are
+untouched by migration 006. Migrations 004 and 006 are applied in Staging and
+Production; deployment remains pending. OQ-4/OQ-5 are implemented additively in
+migration 007 (Phase 5b below).
 
 **Supported methods: exactly** `pago_movil` → VES, `cash_usd` → USD,
 `binance_pay` → USDT and `binance_transfer` → USDT (the two Binance modalities
@@ -176,11 +183,11 @@ remains OPEN.
 ## Phase 5 — Admin panel and point of sale 🚧
 
 **Progress:** the POS cash-sale, external-cash-registration, verification and
-refund **backend** is implemented in migration 006 (local-only; no remote
-apply). The `/admin` panel now renders a POS cash-sale form and a refund form
-behind a server-side active-admin session check that fails closed before any
-catalog read or form renders. These forms are local code: migration 006 has not
-been applied remotely, and the forms are not deployed. Full protected admin
+refund **backend** is implemented in migration 006, which is applied in Staging
+and Production. The `/admin` panel now renders a POS cash-sale form and a refund
+form behind a server-side active-admin session check that fails closed before any
+catalog read or form renders. These forms are local code and are not deployed.
+Full protected admin
 shell and provisioning of the two administrators remain pending. OQ-7 was
 resolved by migration 006; OQ-11 was resolved by confirmed decision #36
 (anonymous in-person POS sales, no customer fields and no schema change). OQ-12
@@ -213,9 +220,9 @@ on the new private `/seguimiento/[token]` route: all submitted receipts, exact
 ## Phase 5b — BCV rates and monetary rounding (OQ-4 / OQ-5) ✅ (backend)
 
 **Progress:** implemented additively in `supabase/migrations/007_bcv_rates_and_rounding.sql`
-(local-only; no UI, no remote apply, no deployment). Migration 006 is the
-local validation baseline; 007 is the next migration and rewrites nothing
-earlier.
+with no UI. Migration 007 is applied in Staging and Production; deployment
+remains pending. Migration 006 is the local validation baseline; 007 is the next
+migration and rewrites nothing earlier.
 
 - **Backend implemented in migration 007 (no UI):** manual BCV rate
   administration through service-role RPCs (`register_bcv_rate`,
@@ -256,24 +263,65 @@ earlier.
   a separate future path that can reuse `register_bcv_rate` with a machine
   `source`. No network call, credential, cron or secret was added.
 - Validated locally (disposable local PostgreSQL 001–007, static contract and
-  server-action suites); not applied remotely or deployed.
+  server-action suites). Migration 007 is applied in Staging and Production;
+  deployment remains pending.
 - The stale-rate maximum age remains an **unresolved business decision**:
   `is_stale` is informational only, no threshold is invented or enforced.
 
 ## Phase 9 — Public product reviews 🔜
 
-- Local implementation on `features/product-reviews` (no PR/merge). Migration `014_product_reviews.sql` additive/local-only, **not applied remotely**.
+- Local implementation on `features/product-reviews` (no PR/merge). Migration `014_product_reviews.sql` is additive and applied in Staging and Production.
 - Public reviews: no registration/login, optional name, required product/rating/comment, published immediately; admin hide/restore with audit log.
 - Verified reviews: tracking-token contextual path only; DB enforces one verified review per product per order.
 - Ranking: Bayesian weighted rating `WR=(v/(v+m))*R+(m/(v+m))*C`, `C=4.0`, `m=5`; no fabricated ratings.
 - Realtime: review tables added to publication; client subscriptions refresh/reconcile with RLS as authorization boundary.
-- Blocked: remote migration application/verification, PR creation (`gh` unavailable), production Realtime verification.
+- Blocked: PR creation (`gh` unavailable) and production Realtime validation. The migration 014 prerequisite is complete.
 
 ## Phase 6 — Realtime, communication and settings ⬜
 
-- Supabase Realtime notifications for both administrators (new order, new
-  receipt, relevant order/payment updates); database remains the source of
-  truth.
+### OQ-16 — SLA receipt-review notifications (migration prerequisite complete, activation pending)
+
+- [x] **Implemented locally; migration applied in Staging and Production:**
+  migration `005_receipt_sla_notifications.sql` + `supabase/worker/sla-worker.mjs`
+  (DECISIONS #25, amendment to #1). Each receipt submission starts its own 24-hour
+  clock; every active administrator gets a durable in-app notification on the first
+  run after the deadline, repeated every 15 minutes until that submission is
+  approved/rejected. DB dedupe `(receipt_submission_id, admin_id, interval_bucket)`.
+  SLA processing writes no order/payment/reservation/inventory state.
+  Implementation report (local): 39 files / 396 tests PASS; typecheck PASS;
+  build PASS; `git diff --check` PASS.
+- [ ] **Operationalization / activation pending (documentation only; no remote
+  action performed):** OQ-16 migration prerequisite complete: migration 005
+  applied in Staging and Production. Use the
+  **existing `pasteleria-bcv-worker` Render Web Service** with unified runtime
+  (no new Render service/Background Worker); configure required env vars
+  (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; optional
+  `SLA_POLL_MS`, `SLA_SHUTDOWN_TIMEOUT_MS`, `BCV_SYNC_FETCH_TIMEOUT_MS`,
+  `BCV_SYNC_SHUTDOWN_TIMEOUT_MS`); verify startup + 15-min cycle and
+  `process_sla_notifications` RPC metrics; validate both active admins receive rows,
+  unread counter, and mark-as-read behavior; document logs/monitoring/failure
+  handling/operational verification. Deployment, production activation and runtime
+  validation remain pending.
+
+### Phase 6 — General Admin Notifications (architecture defined/planned, implementation pending)
+
+- [ ] **Independent general notification feature (separate from OQ-16 SLA):**
+  in-panel notifications for both active administrators, DB as source of truth,
+  Supabase Realtime updates. OQ-16 table/RPC/worker/behavior remain isolated;
+  general events must not be forced into SLA schema.
+- **Events:** new order; new payment receipt; corrected/resubmitted payment
+  receipt; new customer review.
+- **Behavior:** unread counter; notifications list/history; navigate to related
+  order/payment/review; mark one as read; mark all as read; dedupe/idempotency;
+  both active admins receive relevant notifications; realtime updates without
+  refresh.
+- **Exclusions:** no customer-facing notifications; no email; no WhatsApp; no BCV
+  worker changes; no OQ-16 behavior changes.
+- **Unresolved before implementation:** data model (extend/generalize
+  `admin_notifications` vs separate table), per-event dedupe keys, write path
+  (trigger/RPC/server action, atomicity), Realtime publication/RLS/replica
+  identity impact, mark-all-read authorization boundary, navigation contract. See
+  DECISIONS #40 and TASKS “Phase 6 — General Admin Notifications”.
 - [x] **Supabase Realtime publication — backend implemented locally:** additive
   migration `008_realtime_publication.sql` adds the existing `orders`, `payments`
   and `cancellation_requests` tables to the managed `supabase_realtime`
@@ -290,9 +338,12 @@ earlier.
   15 minutes until that submission is approved/rejected. Database-level dedupe
   `(receipt_submission_id, admin_id, interval_bucket)` covers overlapping
   executions; delayed runs create only the current bucket. No order/payment/
-  reservation/inventory state is written; no external provider/outbox. The one
-  background worker is authorized by the OQ-16-only amendment to DECISIONS #1.
-  Validated locally, not applied remotely or deployed.
+  reservation/inventory state is written; no external provider/outbox. The
+  OQ-16 scheduled worker is authorized by the OQ-16-only amendment to DECISIONS
+  #1 and now runs in the unified runtime.
+  Validated locally; migration 005 is applied in Staging and Production. Integrated
+  into the unified local runtime for the existing Render Web Service;
+  deployment/activation remains pending.
 - Prepared WhatsApp deep links (no WhatsApp Business API in this release).
 - [x] **OQ-8 — store settings schedule structure — backend implemented locally:**
       additive migration `009_store_settings_schedule.sql` defines and validates
@@ -327,10 +378,16 @@ earlier.
     worker can bind `0.0.0.0:$PORT` and expose `GET /healthz` (minimal
     non-sensitive JSON) for Render Free Web Service health checks. HTTP requests
     never trigger sync. Scheduler and health server run concurrently; shutdown
-    closes HTTP server and worker resources cleanly. Render build/start:
-    `npm ci` / `node supabase/worker/bcv-rate-worker.mjs`. **Free limitation:**
-    sleeping instances can miss fixed Caracas slots; missed slots are intentionally
-    not replayed. No Render resources/deploy performed.
+    closes HTTP server and worker resources cleanly.
+  - **Unified runtime (local, this branch):** `supabase/worker/runtime.mjs`
+    (`npm run worker:unified`) hosts BCV + OQ-16 in the same Render Web Service
+    process with one health server. Migrations 015 and 005 are applied in Staging
+    and Production. Start command to use on the existing service:
+    `node supabase/worker/runtime.mjs`. One service/process/port/endpoint; workers
+    start independently with failure isolation and idempotent shutdown. **Free
+    limitation:** sleeping instances can miss fixed Caracas slots and 15-min SLA
+    cycles; missed cycles are intentionally not replayed. No Render
+    resources/deploy performed.
 
 ## Developer automation: autonomous OpenCode workflow (complete)
 
@@ -410,4 +467,7 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - **B2** — administrator emails/Auth provisioning external dependency; no accounts/credentials invented.
 - **B3** — final catalog/seed/photographs/business content external dependency; realistic empty states used where unavailable.
 
-Only migration 001 is applied remotely; migrations 002 to 009 are local-only, so many admin reads degrade gracefully against production. No remote migration or deploy was performed.
+Current confirmed status: all repository migrations, including 014 and 015, are
+applied in Staging and Production. Admin reads still show honest unavailable
+states where runtime or business data is missing. No Render deployment was
+performed.

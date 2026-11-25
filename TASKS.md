@@ -419,6 +419,12 @@ PASS; `git diff --check` PASS.
       are documented in `docs/WORKER_DEPLOYMENT.md`. Set env vars/secrets in Render
       dashboard; deployment/restart is a separate manual step and has not been
       performed.
+- [x] **Local npm worker entrypoints configured and documented:**
+      `npm run worker:unified` and `npm run worker:sla` auto-load `.env.local`
+      via Node’s built-in `--env-file-if-exists` flag when present. The Render
+      start command remains `node supabase/worker/runtime.mjs`. Deployment,
+      activation, 15-minute cycle and RPC checks, and runtime validation remain
+      pending.
 - [ ] **Verify 15-minute cycle and RPC**: confirm startup cycle runs immediately,
       then every 15 min; structured logs include `worker_started`,
       `sla_cycle_complete`/`sla_cycle_failed` with metrics; no overlapping cycles;

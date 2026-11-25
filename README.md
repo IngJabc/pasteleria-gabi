@@ -56,6 +56,7 @@ and [`docs/WORKER_DEPLOYMENT.md`](./docs/WORKER_DEPLOYMENT.md).
 ## Prerequisites
 
 - Node.js 22+ (developed on v22.17)
+- npm worker scripts need Node.js >=22.9 for `--env-file-if-exists`; prefer 22.21+
 - npm 10+
 
 ## Installation
@@ -86,7 +87,8 @@ Then fill `.env.local` with the values from the Supabase dashboard.
 | `npm run typecheck` | Run `tsc --noEmit` (requires a prior `npm run build`/`next typegen` so generated route types exist) |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Run Vitest in watch mode |
-| `npm run worker:sla` | Run the OQ-16 SLA worker once installed as a scheduled process (needs `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; optional `SLA_POLL_MS`/`SLA_SHUTDOWN_TIMEOUT_MS`) |
+| `npm run worker:unified` | Start the unified BCV + receipt-SLA runtime; auto-loads `.env.local` when present |
+| `npm run worker:sla` | Run the OQ-16 SLA worker on a schedule; both npm worker scripts auto-load `.env.local` when present (needs `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; optional `SLA_POLL_MS`/`SLA_SHUTDOWN_TIMEOUT_MS`) |
 
 ### Database types
 

@@ -303,6 +303,12 @@ migration and rewrites nothing earlier.
   handling/operational verification. Deployment, production activation and runtime
   validation remain pending.
 
+- [x] **Local npm worker entrypoints configured and documented:**
+  `npm run worker:unified` and `npm run worker:sla` auto-load `.env.local` via
+  Node’s built-in `--env-file-if-exists` flag when present. The Render start
+  command remains `node supabase/worker/runtime.mjs`. Deployment, activation,
+  15-minute cycle and RPC checks, and runtime validation remain pending.
+
 ### Phase 6 — General Admin Notifications (architecture defined/planned, implementation pending)
 
 - [ ] **Independent general notification feature (separate from OQ-16 SLA):**

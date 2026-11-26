@@ -894,10 +894,10 @@ explicit nulls in the validated wire contract.
   HTTP status 200 and emits `<meta name="robots" content="noindex">` for that
   response. A literal 404 requires `generateStaticParams` and data access before
   streaming, which needs real catalog data at build time and is out of scope.
-- `next.config.ts` derives `images.remotePatterns` from
-  `NEXT_PUBLIC_SUPABASE_URL` and scopes it to
-  `/storage/v1/object/public/product-images/**`. Set a valid URL at build time;
-  `next/image` rejects Supabase Storage URLs otherwise.
+- `next.config.ts` image allowlist hardened: exact HTTPS hosts on
+  `/storage/v1/object/public/**`, derived from `NEXT_PUBLIC_SUPABASE_URL` when
+  parseable and retaining the known project hostname as a fallback (see the
+  Supabase Storage image host configuration section below).
 
 Validation (public catalog): `npm test` passed 27 files and 299 tests. The focused
 catalog suite passed 1 file and 8 tests. `npm run lint` reported 0 errors and
@@ -1184,3 +1184,44 @@ message; a duplicate `observed_at` unique violation does too.
 - [x] Regression tests cover invalid web configuration, RPC denial, missing function, transport failure, duplicate observation timestamps and log redaction. Infrastructure classification is opt-in, so public checkout errors keep their generic fallback; a regression test covers `Invalid API key` with a SQLSTATE.
 - [x] Automated validation passed: full suite 408/408, `tsc --noEmit` clean, targeted BCV lint clean, `next build` successful. `git diff --check` could not run after the build because the shell lost Git access; no whitespace issues were introduced in the edited files.
 - [ ] Deploy to Staging/Production and register one manual rate; if the actionable configuration message appears, verify only that `SUPABASE_SERVICE_ROLE_KEY` in the **web** runtime belongs to the same Supabase project and is a service-role key. Do not inspect, print or change the value here.
+
+---
+
+## Supabase Storage image host configuration (local, uncommitted)
+
+Branch: `fix/supabase-storage-image-host` (from `39ec072bd7275405b4310d127a36849ccc12563f`). No commit, push, PR, merge, remote migration, deployment, environment or secret change performed.
+
+Root cause: `images.remotePatterns` was derived solely from
+`NEXT_PUBLIC_SUPABASE_URL`; when that variable was absent or invalid at
+configuration time the allowlist was empty, and the bucket-specific path allowed
+only `/storage/v1/object/public/product-images/**`. Both cases make `next/image`
+report the external hostname as unconfigured.
+
+- [x] `next.config.ts` now allows only exact HTTPS Supabase Storage patterns on
+      `/storage/v1/object/public/**` with empty port and no query string. It
+      still derives a pattern from `NEXT_PUBLIC_SUPABASE_URL` when parseable and
+      always includes the known project hostname
+      `hqemhwhwwjdfzpwqbory.supabase.co` as a fallback, deduplicating identical
+      entries.
+- [x] No wildcard hosts, deprecated `images.domains`, `unoptimized`,
+      `dangerouslyAllowSVG` or other image-security relaxation was added. All
+      unrelated Next.js settings remain unchanged.
+- [x] Added `src/infrastructure/next-config.test.ts` covering missing, matching,
+      different and invalid Supabase URL values, plus preservation of unrelated
+      configuration.
+- [x] Documentation updated in `README.md`, `docs/ARCHITECTURE.md` and
+      `docs/ROADMAP.md`.
+
+Validation (actual, after the hostname-validation fix):
+`npx vitest run src/infrastructure/next-config.test.ts` — PASS (7/7).
+`npm test` — PASS (33 files: 295 passed and 120 skipped tests; 8 files skipped).
+`npm run typecheck` — PASS. `npm run build` — PASS (Next.js 16.4.6
+Turbopack; Cache Components and Partial Prefetching enabled; 22 app routes).
+`git diff --check` — PASS. ESLint on the two changed TypeScript files — PASS.
+Full `npm run lint` — FAIL on a pre-existing, unrelated
+`src/components/ui/image-modal.tsx` react-hooks error plus two pre-existing
+warnings in `quote-acceptance-migration.test.ts`; neither file was changed by
+this objective. A direct check with Next's installed matcher confirmed that the
+pattern accepts `/storage/v1/object/public/**` URLs on the exact host and
+rejects private paths, query strings, HTTP and other hosts. No commit, push,
+PR, deployment, environment, Storage policy or database change was made.

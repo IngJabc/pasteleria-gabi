@@ -132,6 +132,10 @@ Rules:
   Shutdown is idempotent and coordinates both workers and the HTTP server.
   Deployment/activation is pending; manual Render steps are documented in
   `docs/WORKER_DEPLOYMENT.md`.
+- **Admin BCV write errors:** privileged rate actions classify RPC failures by
+  SQLSTATE and stable message fragments. Callers receive Spanish guidance;
+  server logs receive only the operation, category and nullable code, never SQL,
+  raw messages or credential values. Grants and rate rules are unchanged.
 - **OQ-16 SLA inbox:** `admin_notifications` + `receipt_submissions` (migration
   005) and `supabase/worker/sla-worker.mjs` provide overdue receipt-review
   notifications. Runtime integration does not change SLA semantics. OQ-16

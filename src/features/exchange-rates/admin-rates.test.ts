@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient } from "@/infrastructure/supabase/admin";
 import { requireActiveAdminId } from "@/features/payments/admin-session";
 import {
@@ -32,6 +32,8 @@ const rateInput = {
   idempotencyKey: "rate-key-1234",
 };
 
+const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
 const snapshot = {
   order_id: 42,
   bcv_rate_ves: 36.5,
@@ -43,7 +45,10 @@ const snapshot = {
 };
 
 describe("administrator BCV rate server actions", () => {
+  afterAll(() => consoleError.mockRestore());
+
   beforeEach(() => {
+    consoleError.mockClear();
     rpc.mockReset();
     from.mockReset();
     select.mockReset();
@@ -169,5 +174,86 @@ describe("administrator BCV rate server actions", () => {
       error: "La sesión del administrador no es válida.",
     });
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("reports an invalid web service-role configuration without leaking SQL", async () => {
+    vi.mocked(createSupabaseAdminClient).mockImplementation(() => {
+      throw new Error("Invalid server-only environment variables → SUPABASE_SERVICE_ROLE_KEY");
+    });
+
+    expect(await registerBcvRate(rateInput)).toEqual({
+      ok: false,
+      error: "El servidor no puede completar la operación. Revisa la configuración de Supabase e inténtalo de nuevo.",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith("[admin-client] bcv failure", {
+      category: "server_configuration",
+      code: null,
+    });
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
+  });
+
+  it("maps a service-role RPC denial to an actionable configuration message", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: { message: "permission denied for function register_bcv_rate", code: "42501" },
+    });
+
+    expect(await registerBcvRate(rateInput)).toEqual({
+      ok: false,
+      error: "El servidor no puede completar la operación. Revisa la configuración de Supabase e inténtalo de nuevo.",
+    });
+    expect(consoleError).toHaveBeenCalledWith("[register_bcv_rate] bcv failure", {
+      category: "server_configuration",
+      code: "42501",
+    });
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain("permission denied");
+  });
+
+  it("maps a missing function to the same actionable configuration message", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: {
+        message: "Could not find the function public.register_bcv_rate in the schema cache",
+        code: "PGRST202",
+      },
+    });
+
+    expect(await registerBcvRate(rateInput)).toEqual({
+      ok: false,
+      error: "El servidor no puede completar la operación. Revisa la configuración de Supabase e inténtalo de nuevo.",
+    });
+    expect(consoleError).toHaveBeenCalledWith("[register_bcv_rate] bcv failure", {
+      category: "server_configuration",
+      code: "PGRST202",
+    });
+  });
+
+  it("maps transport failures to a retryable service message", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: { message: "fetch failed", code: null },
+    });
+
+    expect(await registerBcvRate(rateInput)).toEqual({
+      ok: false,
+      error: "No se pudo conectar con el servicio de tasas. Inténtalo de nuevo.",
+    });
+  });
+
+  it("explains a duplicate observation timestamp without exposing the constraint name", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: {
+        message: 'duplicate key value violates unique constraint "exchange_rates_observed_at_key"',
+        code: "23505",
+      },
+    });
+
+    expect(await registerBcvRate(rateInput)).toEqual({
+      ok: false,
+      error: "Ya existe una tasa con esa fecha y hora. Usa otra fecha/hora o deja el campo vacío.",
+    });
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain("exchange_rates_observed_at_key");
   });
 });

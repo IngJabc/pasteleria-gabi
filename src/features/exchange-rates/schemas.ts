@@ -110,8 +110,85 @@ export const rateRowSchema = z.object({
 
 export type RateRow = z.infer<typeof rateRowSchema>;
 
+/**
+ * Failed RPCs are classified by code and stable message fragments. Only the
+ * category and code are logged; raw SQL or credential details never reach a
+ * caller or the server log from this mapper.
+ */
+export type BcvRpcFailure = { message: string; code?: string | null };
+export type BcvFailureCategory =
+  | "server_configuration"
+  | "service_unavailable"
+  | "duplicate_observed_at"
+  | "domain"
+  | "unknown";
+
+export const bcvConfigurationError =
+  "El servidor no puede completar la operación. Revisa la configuración de Supabase e inténtalo de nuevo.";
+export const bcvUnavailableError =
+  "No se pudo conectar con el servicio de tasas. Inténtalo de nuevo.";
+export const bcvDuplicateObservedAtError =
+  "Ya existe una tasa con esa fecha y hora. Usa otra fecha/hora o deja el campo vacío.";
+
+export function classifyBcvFailure({ message, code }: BcvRpcFailure): BcvFailureCategory {
+  const normalizedMessage = message.toLowerCase();
+  const normalizedCode = code?.toUpperCase() ?? "";
+
+  if (
+    normalizedCode === "42501"
+    || normalizedMessage.includes("invalid api key")
+    || normalizedMessage.includes("jwt expired")
+    || normalizedMessage.includes("invalid jwt")
+    || normalizedCode === "PGRST202"
+    || normalizedMessage.includes("could not find the function")
+    || normalizedMessage.includes("schema cache")
+    || normalizedMessage.includes("invalid server-only environment variables")
+    || normalizedMessage.includes("invalid public environment variables")
+    || normalizedMessage.includes("invalid url")
+  ) {
+    return "server_configuration";
+  }
+  if (
+    normalizedCode === "23505"
+    && normalizedMessage.includes("exchange_rates_observed_at_key")
+  ) {
+    return "duplicate_observed_at";
+  }
+  if (
+    normalizedCode === "PGRST503"
+    || normalizedMessage.includes("fetch failed")
+    || normalizedMessage.includes("timeout")
+    || normalizedMessage.includes("network")
+  ) {
+    return "service_unavailable";
+  }
+  if (
+    normalizedMessage.includes("no active BCV rate")
+    || normalizedMessage.includes("tracking token")
+    || normalizedMessage.includes("is canceled")
+    || normalizedMessage.includes("is expired")
+    || normalizedMessage.includes("does not exist")
+    || normalizedMessage.includes("rate must be positive")
+    || normalizedMessage.includes("four decimals")
+    || normalizedMessage.includes("source is required")
+    || normalizedMessage.includes("note is too long")
+    || normalizedMessage.includes("rate to correct")
+    || normalizedMessage.includes("does not exist or is inactive")
+    || normalizedMessage.includes("not active")
+    || normalizedMessage.includes("administrator")
+  ) {
+    return "domain";
+  }
+  return "unknown";
+}
+
 /** Database messages become stable Spanish text; SQL never reaches a caller. */
-export function bcvPublicError(message: string, fallback: string): string {
+export function bcvPublicError(message: string, fallback: string, code?: string | null): string {
+  const category = classifyBcvFailure({ message, code });
+  if (category === "server_configuration") return bcvConfigurationError;
+  if (category === "service_unavailable") return bcvUnavailableError;
+  if (category === "duplicate_observed_at") return bcvDuplicateObservedAtError;
+
   if (message.includes("no active BCV rate")) {
     return "No hay una tasa BCV activa disponible. El pedido conserva su total en USD.";
   }
@@ -121,6 +198,9 @@ export function bcvPublicError(message: string, fallback: string): string {
   if (message.includes("is canceled") || message.includes("is expired")) {
     return "El pedido ya no admite cotización.";
   }
+  if (message.includes("rate to correct") || message.includes("does not exist or is inactive")) {
+    return "La tasa que se desea corregir ya no está activa.";
+  }
   if (message.includes("does not exist")) {
     return "El pedido o la tasa ya no están disponibles.";
   }
@@ -129,9 +209,6 @@ export function bcvPublicError(message: string, fallback: string): string {
   }
   if (message.includes("source is required") || message.includes("note is too long")) {
     return "Los datos de la tasa no son válidos.";
-  }
-  if (message.includes("rate to correct") || message.includes("does not exist or is inactive")) {
-    return "La tasa que se desea corregir ya no está activa.";
   }
   if (message.includes("not active") || message.includes("administrator")) {
     return "La sesión del administrador no es válida.";

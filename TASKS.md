@@ -1163,3 +1163,24 @@ Local test procedure:
 3. Wait ~2 minutes (or watch logs for `next_slot_scheduled` with `test_mode: true`).
 4. Verify `bcv_sync_attempts` and the admin **Pagos y BCV** panel reflect the new attempt.
 5. Remove the variable and restart the worker to restore the normal 09:00/13:00 schedule.
+
+---
+
+## Manual BCV rate registration diagnostics (local, uncommitted)
+
+Branch: `fix/manual-bcv-rate-registration` (from `3f8f05574b4c81651371fb718d9ad4878075c31e`). No commit, push, PR, merge, remote migration, deployment, Production data access or environment/secret change performed.
+
+The reported Production response can only come from the unmapped `bcvPublicError()`
+fallback or a malformed RPC payload in `registerBcvRate()`. Automatic sync works
+through a separate Render worker runtime, and rate display works through the
+RLS-visible server client, so the remaining difference is the web runtime's
+service-role call. `permission denied` (SQLSTATE 42501), a missing/stale function
+(PGRST202) or an invalid service-role key reach the old code as the same generic
+message; a duplicate `observed_at` unique violation does too.
+
+- [x] `bcvPublicError()` now classifies service-role/PostgREST failures by SQLSTATE and stable message fragments, producing actionable Spanish text without leaking SQL, constraints or credentials.
+- [x] `withAdmin()` catches client construction and action failures, so a missing or unusable web-runtime key returns a structured result instead of an unhandled rejection.
+- [x] Failed admin BCV RPCs log only a stable category and nullable SQLSTATE; raw messages and environment values are never logged.
+- [x] Regression tests cover invalid web configuration, RPC denial, missing function, transport failure, duplicate observation timestamps and log redaction; existing checkout error behavior remains unchanged.
+- [x] Automated validation passed: full suite 407/407, `tsc --noEmit` clean, targeted BCV lint clean, `next build` successful. `git diff --check` could not run after the build because the shell lost Git access; no whitespace issues were introduced in the edited files.
+- [ ] Deploy to Staging/Production and register one manual rate; if the actionable configuration message appears, verify only that `SUPABASE_SERVICE_ROLE_KEY` in the **web** runtime belongs to the same Supabase project and is a service-role key. Do not inspect, print or change the value here.

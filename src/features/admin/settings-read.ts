@@ -18,9 +18,6 @@ import {
 const unavailableError =
   "La configuración de la tienda no está disponible en este momento.";
 const invalidSessionError = "La sesión del administrador no es válida.";
-const invalidInputError = "La notificación no es válida.";
-const capabilityUnavailable =
-  "La capacidad de consultar las notificaciones no está disponible en este momento.";
 
 const MAX_ZONES = 200;
 const MAX_NOTIFICATIONS = 50;
@@ -49,11 +46,10 @@ const notificationRowSchema = z.object({
   receipt_submission_id: z.number().int().positive(),
 });
 
-const notificationIdSchema = z
-  .string()
-  .trim()
-  .regex(/^[1-9][0-9]*$/, "El identificador no es válido.")
-  .transform((value) => Number(value));
+const receiptSubmissionRowSchema = z.object({
+  id: z.number().int().positive(),
+  order_id: z.number().int().positive(),
+});
 
 export type AdminDeliveryZoneView = {
   id: number;
@@ -123,12 +119,15 @@ export type AdminNotificationItem = {
   createdAt: string;
   readAt: string | null;
   receiptSubmissionId: number;
+  /** Resolved from `receipt_submissions`; null means no trustworthy link. */
+  orderId: number | null;
 };
 
 export type AdminNotificationsResult = {
   unavailable: boolean;
   message: string;
   items: AdminNotificationItem[];
+  truncated: boolean;
 };
 
 export type AdminMutationResult = {
@@ -158,7 +157,7 @@ function unavailableSnapshot(message: string): AdminSettingsSnapshotResult {
 }
 
 function unavailableNotifications(message: string): AdminNotificationsResult {
-  return { unavailable: true, message, items: [] };
+  return { unavailable: true, message, items: [], truncated: false };
 }
 
 export async function getAdminSettingsSnapshot(): Promise<AdminSettingsSnapshotResult> {
@@ -324,51 +323,46 @@ export async function listAdminNotifications(): Promise<AdminNotificationsResult
       .limit(MAX_NOTIFICATIONS);
     if (error) return unavailableNotifications(unavailableError);
 
-    const items: AdminNotificationItem[] = [];
-    for (const row of data ?? []) {
+    const rows = (data ?? []).flatMap((row) => {
       const parsed = notificationRowSchema.safeParse(row);
-      if (!parsed.success) continue;
-      items.push({
-        id: parsed.data.id,
-        createdAt: parsed.data.created_at,
-        readAt: parsed.data.read_at,
-        receiptSubmissionId: parsed.data.receipt_submission_id,
-      });
+      return parsed.success ? [parsed.data] : [];
+    });
+
+    // Admins may read receipt submissions (migration 005 RLS). Resolve the real
+    // order id only from validated rows; a failed lookup leaves orderId null so
+    // the inbox renders no destination instead of inventing one.
+    const orderIds = new Map<number, number>();
+    if (rows.length > 0) {
+      const submissions = await supabase
+        .from("receipt_submissions")
+        .select("id, order_id")
+        .in(
+          "id",
+          rows.map((row) => row.receipt_submission_id),
+        );
+      if (!submissions.error) {
+        for (const row of submissions.data ?? []) {
+          const parsed = receiptSubmissionRowSchema.safeParse(row);
+          if (parsed.success) orderIds.set(parsed.data.id, parsed.data.order_id);
+        }
+      }
     }
 
-    return { unavailable: false, message: "", items };
+    const items: AdminNotificationItem[] = rows.map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      readAt: row.read_at,
+      receiptSubmissionId: row.receipt_submission_id,
+      orderId: orderIds.get(row.receipt_submission_id) ?? null,
+    }));
+
+    return {
+      unavailable: false,
+      message: "",
+      items,
+      truncated: rows.length === MAX_NOTIFICATIONS,
+    };
   } catch {
     return unavailableNotifications(unavailableError);
-  }
-}
-
-/** Marks one of the current admin's own notifications as read. */
-export async function markAdminNotificationAsRead(input: {
-  notificationId: string;
-}): Promise<AdminMutationResult> {
-  "use server";
-
-  let adminId: string;
-  try {
-    adminId = await requireActiveAdminId();
-  } catch {
-    return { ok: false, message: invalidSessionError };
-  }
-
-  const parsed = notificationIdSchema.safeParse(input?.notificationId);
-  if (!parsed.success) return { ok: false, message: invalidInputError };
-
-  try {
-    const supabase = await createSupabaseServerClient();
-    const { error } = await supabase
-      .from("admin_notifications")
-      .update({ read_at: new Date().toISOString() })
-      .eq("id", parsed.data)
-      .eq("admin_id", adminId)
-      .is("read_at", null);
-    if (error) return { ok: false, message: capabilityUnavailable };
-    return { ok: true, message: "La notificación se marcó como leída." };
-  } catch {
-    return { ok: false, message: capabilityUnavailable };
   }
 }

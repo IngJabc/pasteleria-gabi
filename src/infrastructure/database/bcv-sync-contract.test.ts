@@ -20,6 +20,8 @@ describe("migration 015 contract (static)", () => {
   it("is the 15th sequential migration and leaves prior migrations present", () => {
     const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
     expect(files[14]).toBe("015_bcv_sync_attempts.sql");
+    expect(files[15]).toBe("016_general_admin_notifications.sql");
+    expect(files[16]).toBe("017_unified_notifications_realtime.sql");
     expect(files).toContain("001_catalog_and_admin_foundation.sql");
     expect(files).toContain("014_product_reviews.sql");
     expect(files.filter((f) => f.startsWith("015_"))).toEqual(["015_bcv_sync_attempts.sql"]);

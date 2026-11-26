@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { CartProvider } from "@/features/cart/cart-context";
 import { CheckoutDraftProvider } from "@/features/cart/checkout-draft";
 import { TopBar } from "@/components/layout/top-bar";
@@ -20,7 +20,10 @@ export default function StorefrontLayout({
       <CheckoutDraftProvider>
         <ToastProvider>
           <TopBar />
-          <SiteHeader />
+          {/* usePathname() is runtime-only: stream the interactive header. */}
+          <Suspense fallback={<div className="h-[4.75rem] bg-cream" aria-hidden="true" />}>
+            <SiteHeader />
+          </Suspense>
           <div className="flex flex-1 flex-col">{children}</div>
           <SiteFooter />
         </ToastProvider>

@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getAdminSettingsSnapshot } from "./settings-read";
+import { revalidatePath } from "next/cache";
+import {
+  getAdminSettingsSnapshot,
+  listAdminNotifications,
+} from "./settings-read";
+import {
+  markAdminNotificationAsRead,
+  markAllAdminNotificationsReadAction,
+} from "./sla-notification-actions";
 import { createSupabaseAdminClient } from "@/infrastructure/supabase/admin";
 import { createSupabaseServerClient } from "@/infrastructure/supabase/server";
 import { requireActiveAdminId } from "@/features/payments/admin-session";
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/infrastructure/supabase/admin", () => ({
   createSupabaseAdminClient: vi.fn(),
 }));
@@ -66,6 +75,9 @@ function makeBuilder(result: QueryResult) {
   const builder = {
     select: vi.fn(),
     eq: vi.fn(),
+    is: vi.fn(),
+    in: vi.fn(),
+    update: vi.fn(),
     order: vi.fn(),
     not: vi.fn(),
     limit: vi.fn(),
@@ -77,6 +89,9 @@ function makeBuilder(result: QueryResult) {
   };
   builder.select.mockReturnValue(builder);
   builder.eq.mockReturnValue(builder);
+  builder.is.mockReturnValue(builder);
+  builder.in.mockReturnValue(builder);
+  builder.update.mockReturnValue(builder);
   builder.order.mockReturnValue(builder);
   builder.not.mockReturnValue(builder);
   builder.limit.mockReturnValue(builder);
@@ -145,5 +160,128 @@ describe("admin settings snapshot with the public BCV rate", () => {
     expect(snapshot.bcvLastSuccessfulRetrievalAt).toBe("2026-11-25T12:00:00Z");
     expect(publicRpc).toHaveBeenCalledExactlyOnceWith("get_bcv_rate");
     expect(createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+});
+
+describe("unified inbox SLA reads and mark-all", () => {
+  const from = vi.fn();
+  const notificationRow = {
+    id: 8,
+    created_at: "2026-11-26T10:00:00Z",
+    read_at: null,
+    receipt_submission_id: 30,
+  };
+
+  beforeEach(() => {
+    vi.mocked(requireActiveAdminId).mockReset();
+    vi.mocked(requireActiveAdminId).mockResolvedValue(ADMIN);
+    vi.mocked(createSupabaseServerClient).mockReset();
+    vi.mocked(createSupabaseServerClient).mockResolvedValue({ from } as never);
+    vi.mocked(revalidatePath).mockReset();
+    from.mockReset();
+  });
+
+  it("resolves each SLA row's real order id for its destination", async () => {
+    const notifications = makeBuilder({ data: [notificationRow], error: null });
+    const submissions = makeBuilder({
+      data: [{ id: 30, order_id: 7 }],
+      error: null,
+    });
+    from.mockImplementation((table: string) => {
+      if (table === "admin_notifications") return notifications;
+      if (table === "receipt_submissions") return submissions;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    const result = await listAdminNotifications();
+
+    expect(result.unavailable).toBe(false);
+    expect(result.truncated).toBe(false);
+    expect(result.items).toEqual([
+      {
+        id: 8,
+        createdAt: "2026-11-26T10:00:00Z",
+        readAt: null,
+        receiptSubmissionId: 30,
+        orderId: 7,
+      },
+    ]);
+    expect(notifications.eq).toHaveBeenCalledWith("admin_id", ADMIN);
+    expect(notifications.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(notifications.limit).toHaveBeenCalledWith(50);
+    expect(submissions.in).toHaveBeenCalledWith("id", [30]);
+  });
+
+  it("leaves orderId null when the lookup fails instead of inventing a link", async () => {
+    const notifications = makeBuilder({ data: [notificationRow], error: null });
+    const submissions = makeBuilder({ data: null, error: { message: "falló" } });
+    from.mockImplementation((table: string) =>
+      table === "admin_notifications" ? notifications : submissions,
+    );
+
+    const result = await listAdminNotifications();
+    expect(result.unavailable).toBe(false);
+    expect(result.items[0]?.orderId).toBeNull();
+  });
+
+  it("signals when the 50-row SLA cap is reached", async () => {
+    const rows = Array.from({ length: 50 }, (_, index) => ({
+      ...notificationRow,
+      id: index + 1,
+      receipt_submission_id: index + 1,
+    }));
+    const notifications = makeBuilder({ data: rows, error: null });
+    const submissions = makeBuilder({ data: [], error: null });
+    from.mockImplementation((table: string) =>
+      table === "admin_notifications" ? notifications : submissions,
+    );
+
+    const result = await listAdminNotifications();
+    expect(result.items).toHaveLength(50);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("rejects an unsafe SLA notification id before touching the database", async () => {
+    const notifications = makeBuilder({ data: null, error: null });
+    from.mockImplementation(() => notifications);
+
+    const result = await markAdminNotificationAsRead({
+      notificationId: "99999999999999999999999999",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toBe("La notificación no es válida.");
+    expect(notifications.update).not.toHaveBeenCalled();
+  });
+
+  it("marks only the session admin's unread SLA rows and revalidates both paths", async () => {
+    const notifications = makeBuilder({ data: null, error: null });
+    from.mockImplementation((table: string) => {
+      if (table !== "admin_notifications") throw new Error(`Unexpected table: ${table}`);
+      return notifications;
+    });
+
+    const result = await markAllAdminNotificationsReadAction();
+
+    expect(result).toEqual({
+      ok: true,
+      message: "Todas las notificaciones se marcaron como leídas.",
+    });
+    const payload = notifications.update.mock.calls[0]?.[0] as { read_at: string };
+    expect(payload.read_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(notifications.eq).toHaveBeenCalledWith("admin_id", ADMIN);
+    expect(notifications.is).toHaveBeenCalledWith("read_at", null);
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/notificaciones");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin");
+  });
+
+  it("fails honestly when the SLA mark-all update errors", async () => {
+    const notifications = makeBuilder({ data: null, error: { message: "falló" } });
+    from.mockImplementation(() => notifications);
+
+    const result = await markAllAdminNotificationsReadAction();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/no está disponible/);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

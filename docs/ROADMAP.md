@@ -6,10 +6,13 @@ before its phase starts.
 
 Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
-> **Current migration status:** all repository migrations are applied in both
-> Supabase Staging and Supabase Production, including migration 005 and migration
-> 015. Branch notes that say a branch did not apply migrations describe that
-> branch only.
+> **Current migration status:** all repository migrations **except migrations
+> 016 and 017** are applied in both Supabase Staging and Supabase Production,
+> including migration 005 and migration 015.
+> `016_general_admin_notifications.sql` and
+> `017_unified_notifications_realtime.sql` are local-only migrations and have
+> **not** been applied remotely. Branch notes that say a branch did not apply
+> migrations describe that branch only.
 
 > **Payments Module naming:** `supabase/migrations/006_payments_and_verification.sql`
 > is the Payments Module backend. Historical roadmap headings call this scope
@@ -42,11 +45,12 @@ detail pages now use request-time anon reads through
 tables and the public `product-images` Storage bucket. This work adds no seed
 data, migration, RLS or Storage policy change, and makes no remote Supabase
 change. Admin auth, admin CRUD and the catalog/product seed remain pending.
-Supabase Storage photos are now allowed through exact `next/image` remote
-patterns on `/storage/v1/object/public/**`: the host is derived from
-`NEXT_PUBLIC_SUPABASE_URL` when available, with the known project hostname
-`hqemhwhwwjdfzpwqbory.supabase.co` retained as a fallback. No wildcard host,
-`unoptimized` setting or image-security relaxation was introduced.
+Supabase Storage photos are now allowed through one bounded `next/image`
+remote pattern for HTTPS `*.supabase.co` public Storage paths
+(`/storage/v1/object/public/**`, no port or query). The wildcard matches exactly
+one Supabase project subdomain; it is intentional so switching Supabase projects
+does not require a code or config change. No `images.domains`, `unoptimized`
+setting or other image-security relaxation was introduced.
 
 - Create the Supabase project; provision environment variables (no credentials
   in source code).
@@ -68,8 +72,9 @@ patterns on `/storage/v1/object/public/**`: the host is derived from
 `inventory_movements` (append-only, `order_id` added by M3 together with `orders`),
 RLS, and the `create_inventory_batch` / `adjust_inventory` / `get_product_stock`
 RPCs, validated on a local PostgreSQL cluster (36 tests). That branch did not
-apply migrations; current confirmed status is all migrations applied in Staging
-and Production. Reservations (§6.2), checkout-time stock deduction, sale
+apply migrations; current confirmed status is migrations 001–015 applied in
+Staging and Production (016 is local-only). Reservations (§6.2), checkout-time
+stock deduction, sale
 movements and the 20-minute timing (initial deadline + single correction
 window) arrived with **M3** (migration 002 itself is unchanged); the 24-hour
 administrative review SLA remains notification-only and is deliberately not a
@@ -99,8 +104,9 @@ deadlock-free FIFO reservation, receipt hold with a two-receipt counter, single
 lazy expiry, consume → `sale` movement, release, PII-free tracking, guest
 cancellation requests), validated on a local PostgreSQL cluster (73 tests total
 at that point, 109 after Phase 4/M4 incl. M1/M2). That branch did not apply
-migrations; current confirmed status is all migrations applied in Staging and
-Production. The guest checkout / tracking / cancellation **UI** and the Phase 4
+migrations; current confirmed status is migrations 001–015 applied in Staging and
+Production (016 is local-only). The guest checkout / tracking / cancellation
+**UI** and the Phase 4
 payment workflow remain to do. OQ-13 (quote case), OQ-14, OQ-15, **OQ-16 and
 OQ-17 are all resolved in documentation** (DECISIONS #24–#26). OQ-17 is
 **implemented in Phase 4** (`supabase/migrations/004_quote_acceptance.sql`): a
@@ -282,7 +288,11 @@ migration and rewrites nothing earlier.
 - Realtime: review tables added to publication; client subscriptions refresh/reconcile with RLS as authorization boundary.
 - Blocked: PR creation (`gh` unavailable) and production Realtime validation. The migration 014 prerequisite is complete.
 
-## Phase 6 — Realtime, communication and settings ⬜
+## Phase 6 — Realtime, communication and settings 🚧
+
+General admin notifications are implemented **locally** and OQ-16 is implemented,
+but migration 016 is not applied and runtime/remote validation is still open; the
+phase gate therefore remains open.
 
 ### OQ-16 — SLA receipt-review notifications (migration prerequisite complete, activation pending)
 
@@ -314,25 +324,44 @@ migration and rewrites nothing earlier.
   command remains `node supabase/worker/runtime.mjs`. Deployment, activation,
   15-minute cycle and RPC checks, and runtime validation remain pending.
 
-### Phase 6 — General Admin Notifications (architecture defined/planned, implementation pending)
+### Phase 6 — General Admin Notifications (implemented locally; not applied/deployed)
 
-- [ ] **Independent general notification feature (separate from OQ-16 SLA):**
-  in-panel notifications for both active administrators, DB as source of truth,
-  Supabase Realtime updates. OQ-16 table/RPC/worker/behavior remain isolated;
-  general events must not be forced into SLA schema.
-- **Events:** new order; new payment receipt; corrected/resubmitted payment
-  receipt; new customer review.
-- **Behavior:** unread counter; notifications list/history; navigate to related
-  order/payment/review; mark one as read; mark all as read; dedupe/idempotency;
-  both active admins receive relevant notifications; realtime updates without
-  refresh.
-- **Exclusions:** no customer-facing notifications; no email; no WhatsApp; no BCV
-  worker changes; no OQ-16 behavior changes.
-- **Unresolved before implementation:** data model (extend/generalize
-  `admin_notifications` vs separate table), per-event dedupe keys, write path
-  (trigger/RPC/server action, atomicity), Realtime publication/RLS/replica
-  identity impact, mark-all-read authorization boundary, navigation contract. See
-  DECISIONS #40 and TASKS “Phase 6 — General Admin Notifications”.
+- [x] **Independent general notification feature (separate from OQ-16 SLA):**
+  all six #40 blockers are resolved and accepted in DECISIONS **#41**. The
+  OQ-16 table/RPC/worker/behavior remain isolated; general events were not forced
+  into the SLA schema.
+- **Events:** new order (online only); new payment receipt; corrected/resubmitted
+  payment receipt; new customer review.
+- **Behavior implemented locally:** one Spanish `/admin/notificaciones` unified
+  inbox for general notifications (200-row cap) and OQ-16 SLA notifications
+  (50-row cap), each with an explicit truncation notice; clickable summary and
+  destination for every row with a real id; mark one read/unread for general
+  rows and mark-read-only for SLA rows; mark-all on both sources; one combined
+  sidebar unread badge; deterministic dedupe; one general row per active
+  administrator; and Realtime refresh without a manual reload.
+- **Data/write path:** local `016_general_admin_notifications.sql` adds a
+  dedicated table (not an extension of `admin_notifications`), event-prefixed keys
+  with `UNIQUE (event_key, admin_id)`, transactional triggers and a private
+  `SECURITY DEFINER` fanout helper. No new worker or external channel.
+- **Realtime:** guarded catalog-based addition of both tables to
+  `supabase_realtime` with default replica identity (local 016 + 017); INSERT
+  rows are the source of truth, no `payload.old` or UPDATE dependency, one delayed
+  reconnect per channel and debounced `router.refresh()`, no polling.
+- **Exclusions (unchanged):** no customer-facing notifications; no email; no
+  WhatsApp; no BCV worker changes; no OQ-16 behavior/trigger/RPC changes.
+- [x] **Local UI improvements (ADR #43):** decorative `+N` cart chip flying from
+  the add button to the bag in a fixed overlay using the Web Animations API
+  (reduced-motion aware, transform/opacity only); accessible 44×44 SVG hamburger
+  with an animated, non-shifting mobile nav overlay that closes on link, Escape
+  and route change; automatic mark-read when an unread notification link is
+  opened for either source; and a Spanish in-app toast for deduplicated
+  Realtime INSERTs. No new migration or external channel; cart and menu were
+  exercised in the local browser, with no remote runtime verification.
+- **Phase gate still open:** migrations 016 and 017 have **not** been applied in
+  Staging or Production; behavioral SQL tests were skipped locally (no PostgreSQL binaries);
+  RLS/fanout/mark-state and Realtime INSERT delivery need runtime validation in
+  Staging. OQ-16 worker deployment/activation remains a separate human/remote
+  track. See DECISIONS #40/#41/#42 and TASKS “Phase 6 — General Admin Notifications”.
 - [x] **Supabase Realtime publication — backend implemented locally:** additive
   migration `008_realtime_publication.sql` adds the existing `orders`, `payments`
   and `cancellation_requests` tables to the managed `supabase_realtime`
@@ -496,7 +525,8 @@ From SPEC §19 — must be resolved before implementing the affected flow:
 - **B2** — administrator emails/Auth provisioning external dependency; no accounts/credentials invented.
 - **B3** — final catalog/seed/photographs/business content external dependency; realistic empty states used where unavailable.
 
-Current confirmed status: all repository migrations, including 014 and 015, are
-applied in Staging and Production. Admin reads still show honest unavailable
-states where runtime or business data is missing. No Render deployment was
-performed.
+Current confirmed status at that time: all repository migrations, including 014
+and 015, were applied in Staging and Production; the later local-only migration
+016 is the exception and has not been applied remotely. Admin reads still show
+honest unavailable states where runtime or business data is missing. No Render
+deployment was performed.

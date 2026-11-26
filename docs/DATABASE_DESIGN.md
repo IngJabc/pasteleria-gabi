@@ -7,8 +7,11 @@ Proposed initial database architecture for Pastelería Online (Phase 1A design).
 `20261114023000_m1_…` when the PR merged) covers the tables of §3–§5 and §10.2
 plus the SPEC-confirmed seeds. It was validated on a local PostgreSQL cluster
 with a Supabase stub (roles, `auth`, `storage`) and behavioral RLS tests, then
-applied to the production Supabase project. All repository migrations are now
-applied in both Supabase Staging and Supabase Production.
+applied to the production Supabase project. All repository migrations **except
+migrations 016 and 017** are applied in both Supabase Staging and Supabase
+Production; `016_general_admin_notifications.sql` and
+`017_unified_notifications_realtime.sql` are local-only and have not been applied
+remotely.
 
 M2 implemented in `supabase/migrations/002_inventory_foundation.sql` covers §6.1
 (`inventory_batches`), §6.3 (`inventory_movements`, without `order_id`: deferred
@@ -487,21 +490,90 @@ added with either work.
 > **Status audit (2026-11-24):** OQ-16 schema/RPC/RLS/worker/UI read paths are
 > implemented locally, and migration 005 is applied in Staging and Production.
 > The unified worker is not deployed or activated, and production runtime
-> validation remains pending. No `admin_notifications` Realtime publication
-> exists (008 covers orders/payments/cancellation_requests only). Settings inbox
-> is read-only; mark-as-read action exists but is not exposed as a control. Those
-> gaps explain why notifications may not have been observed in target environments.
->
-> **Phase 6 General Admin Notifications (documentation/planning, not implemented):**
-> Keep OQ-16 SLA schema/behavior isolated. General events (new order, new payment
-> receipt, corrected/resubmitted receipt, new customer review) require a separate
-> data model/event lifecycle decision before implementation. Do not overload SLA
-> dedupe `(receipt_submission_id, admin_id, interval_bucket)` or
-> `process_sla_notifications` semantics for general business events. Unresolved:
-> extend `admin_notifications` with careful backward-compatible generalization vs
-> separate general table; per-event dedupe keys; write path/atomicity; Realtime
-> publication/RLS impact; mark-all-read model; navigation target contract. No
-> schema change is made by this documentation pass.
+> validation remains pending. The `admin_notifications` Realtime publication
+> exists only in local-only migration 017 (008 covers
+> orders/payments/cancellation_requests only). SLA rows are now read in the
+> unified `/admin/notificaciones` inbox with `receipt_submissions.order_id`
+> resolved for real links and an exposed mark-read control; the duplicate
+> settings card was removed. Migration 017 changes no SLA rule.
+
+#### General administrator notifications (Phase 6, migration 016 — local only)
+
+> **Status:** `supabase/migrations/016_general_admin_notifications.sql` exists
+> locally but has **NOT** been applied in Staging or Production. The generated
+> `database.types.ts` was updated manually to describe the new table. Static
+> contract and mocked tests passed locally; behavioral SQL tests were written
+> but **skipped** because no local PostgreSQL binaries were available. This table
+> is separate from `admin_notifications`: the OQ-16 SLA schema, dedupe key,
+> `process_sla_notifications` RPC and worker are untouched (DECISIONS #40/#41).
+
+Four event families are stored as `text` values: `new_order` (online orders
+only), `payment_receipt`, `receipt_correction` and `product_review`. Each row is
+individually addressed to one active administrator and immutable except `read_at`.
+
+| Table | Column | Type | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `admin_general_notifications` | `id` | bigint identity | no | primary key |
+| | `event_type` | text | no | `CHECK IN ('new_order','payment_receipt','receipt_correction','product_review')` |
+| | `event_key` | text | no | event-prefixed deterministic key; `UNIQUE (event_key, admin_id)`; CHECK matches key prefix/shape to `event_type` |
+| | `admin_id` | uuid FK → `administrators(id)` | no | `ON DELETE CASCADE`; recipient chosen by the database fanout, never by a client |
+| | `order_id` | bigint FK → `orders(id)` | yes | `ON DELETE CASCADE`; set for orders and both receipt events |
+| | `receipt_submission_id` | bigint FK → `receipt_submissions(id)` | yes | `ON DELETE CASCADE`; set for both receipt events |
+| | `payment_id` | bigint FK → `payments(id)` | yes | `ON DELETE RESTRICT`; set for both receipt events and kept immutable to preserve receipt history |
+| | `review_id` | bigint FK → `product_reviews(id)` | yes | `ON DELETE CASCADE`; set for review events |
+| | `product_id` | bigint FK → `products(id)` | yes | `ON DELETE RESTRICT`; set for review events |
+| | `summary` | text | no | non-blank Spanish summary; immutable |
+| | `created_at` | timestamptz | no | `default now()`; immutable |
+| | `read_at` | timestamptz | yes | `NULL` = unread; `read_at >= created_at` CHECK |
+
+An event-shape CHECK pins every target column combination to its event type:
+`new_order` carries only `order_id`; the two receipt types carry `order_id`,
+`receipt_submission_id` and `payment_id`; `product_review` carries `review_id`
+and `product_id`. Deterministic keys are `new_order:<order_id>`,
+`payment_receipt:<receipt_submission_id>`,
+`receipt_correction:<receipt_submission_id>` and `product_review:<review_id>`;
+`ON CONFLICT (event_key, admin_id) DO NOTHING` makes retries idempotent.
+
+- **Indexes:** `admin_general_notifications_admin_created_idx`
+  `(admin_id, created_at DESC, id DESC)` for the inbox, and the partial
+  `admin_general_notifications_unread_admin_created_idx` with the same columns
+  `WHERE read_at IS NULL` for unread counts.
+- **RLS:** enabled **and** forced. `admin_general_notifications_admin_select`
+  allows `authenticated` rows where `admin_id = auth.uid()` and
+  `private.is_admin()`; `admin_general_notifications_admin_update_own` applies
+  the same `USING`/`WITH CHECK` condition to UPDATE. No anon or non-admin policy
+  exists.
+- **Grants:** all table privileges revoked from `public`, `anon` and
+  `authenticated`; `authenticated` gets `SELECT` and `UPDATE (read_at)` only,
+  `service_role` gets ALL. There is no client INSERT/DELETE path.
+- **Immutability:** `private.enforce_admin_general_notification_immutability()`
+  is a `BEFORE UPDATE` row trigger (`SECURITY DEFINER`, pinned `search_path = ''`)
+  that blocks changes to every column except `read_at` and validates the read
+  timestamp. `EXECUTE` is `service_role` only (the trigger context executes it).
+- **Write path:** `private.create_admin_general_notification(...)` is a private
+  `SECURITY DEFINER`, pinned-`search_path` helper that inserts one row per
+  `administrators.is_active` row with `ON CONFLICT DO NOTHING`. Three triggers
+  call it: `AFTER INSERT ON orders` for `channel = 'online'`; `AFTER UPDATE OF
+  payment_id ON receipt_submissions` with `WHEN (OLD.payment_id IS NULL AND
+  NEW.payment_id IS NOT NULL)` (migration 006 added the column and migration
+  011's `submit_payment_evidence` links it after `hold_order_reservations`
+  created the row with NULL evidence); and `AFTER INSERT ON product_reviews`.
+  The event type is chosen from `attempt_number` (1 = `payment_receipt`,
+  2 = `receipt_correction`). All run in the originating transaction; no worker
+  or existing RPC body was rewritten.
+- **Realtime:** a catalog-guarded `DO` block adds the table to
+  `supabase_realtime` if the publication exists and the table is not already a
+  member. Replica identity stays at the default (PK only); INSERT events carry
+  the full new row and are the source of truth, so `REPLICA IDENTITY FULL` and
+  reliance on old-record payloads are deliberately avoided (DECISIONS #41/#42).
+- **Unified inbox reads (local-only migration 017):** `admin_notifications` rows
+  keep their own 50-row cap and are joined in the presentation layer to
+  `receipt_submissions.order_id` (admin RLS already permits that read). The
+  server resolves the id from validated rows; if it is missing the row has no
+  destination. Migration 017 uses the same catalog-membership pattern to add
+  `admin_notifications` to `supabase_realtime`. It does **not** change RLS,
+  grants, triggers, RPCs, replica identity, SLA timing or receipt rules, and is
+  not applied remotely (DECISIONS #42).
 
 | Table | Column | Type | Null | Notes |
 | --- | --- | --- | --- | --- |
@@ -940,6 +1012,21 @@ applied in Staging and Production):**
   cycles, isolates per-cycle errors, and shuts down gracefully with a bounded
   wait. No external provider/outbox is configured: the in-app inbox is the
   delivery.
+
+**Implemented mechanism (Phase 6 general notifications, migration 016 — local only, not applied):**
+
+- `private.create_admin_general_notification(...)` — private `SECURITY DEFINER`,
+  pinned `search_path`, `service_role`-only EXECUTE; validates the event type/key
+  prefix and non-blank summary, then fans out one row per active administrator
+  with `ON CONFLICT (event_key, admin_id) DO NOTHING`.
+- `private.enforce_admin_general_notification_immutability()` — private
+  `BEFORE UPDATE` trigger function allowing only `read_at` to change.
+- `private.general_notification_order_trigger()`,
+  `private.general_notification_receipt_trigger()` and
+  `private.general_notification_review_trigger()` — private `SECURITY DEFINER`
+  trigger functions for online orders, the guarded evidence-link transition and
+  new reviews; all are `service_role`-only for direct EXECUTE and run in the
+  originating transaction. No new public RPC and no worker.
 
 **Implemented mechanism (Payments Module, migration 006, applied in Staging and Production):**
 

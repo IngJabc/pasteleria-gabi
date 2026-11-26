@@ -42,6 +42,11 @@ detail pages now use request-time anon reads through
 tables and the public `product-images` Storage bucket. This work adds no seed
 data, migration, RLS or Storage policy change, and makes no remote Supabase
 change. Admin auth, admin CRUD and the catalog/product seed remain pending.
+Supabase Storage photos are now allowed through exact `next/image` remote
+patterns on `/storage/v1/object/public/**`: the host is derived from
+`NEXT_PUBLIC_SUPABASE_URL` when available, with the known project hostname
+`hqemhwhwwjdfzpwqbory.supabase.co` retained as a fallback. No wildcard host,
+`unoptimized` setting or image-security relaxation was introduced.
 
 - Create the Supabase project; provision environment variables (no credentials
   in source code).

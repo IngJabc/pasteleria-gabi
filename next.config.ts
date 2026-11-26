@@ -1,14 +1,49 @@
 import type { NextConfig } from "next";
 
-// Public product photos live in the project's Supabase Storage bucket. Derive
-// the origin from configuration so no project hostname is hardcoded here.
+type ImageRemotePattern = {
+  protocol: "https";
+  hostname: string;
+  port: string;
+  pathname: string;
+  search: string;
+};
+
+const SUPABASE_HOSTNAME = "hqemhwhwwjdfzpwqbory.supabase.co";
+const SUPABASE_PUBLIC_PATHNAME = "/storage/v1/object/public/**";
+// Next matches `hostname` with picomatch, so only literal DNS hostnames may be
+// derived from the environment. This rejects wildcard/metacharacter patterns.
+const EXACT_DNS_HOSTNAME =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+// The exact hostname is a fallback because the affected build did not expose
+// NEXT_PUBLIC_SUPABASE_URL reliably at config evaluation time. A valid HTTPS
+// env value still adds its own exact hostname below when it differs.
+const knownSupabasePattern: ImageRemotePattern = {
+  protocol: "https",
+  hostname: SUPABASE_HOSTNAME,
+  port: "",
+  pathname: SUPABASE_PUBLIC_PATHNAME,
+  search: "",
+};
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-let supabaseOrigin: URL | null = null;
+let envSupabaseHostname: string | null = null;
 try {
-  supabaseOrigin = supabaseUrl ? new URL(supabaseUrl) : null;
+  const parsed = supabaseUrl ? new URL(supabaseUrl) : null;
+  if (
+    parsed?.protocol === "https:" &&
+    parsed.hostname &&
+    EXACT_DNS_HOSTNAME.test(parsed.hostname)
+  ) {
+    envSupabaseHostname = parsed.hostname;
+  }
 } catch {
-  // An invalid/missing URL yields no remote pattern; the catalog then simply
-  // cannot render remote photos until the environment is configured.
+  // An invalid URL yields no derived pattern; the exact fallback still applies.
+}
+
+const remotePatterns: ImageRemotePattern[] = [knownSupabasePattern];
+if (envSupabaseHostname && envSupabaseHostname !== SUPABASE_HOSTNAME) {
+  remotePatterns.push({ ...knownSupabasePattern, hostname: envSupabaseHostname });
 }
 
 const nextConfig: NextConfig = {
@@ -16,17 +51,7 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   images: {
-    remotePatterns: supabaseOrigin
-      ? [
-          {
-            protocol: supabaseOrigin.protocol === "https:" ? "https" : "http",
-            hostname: supabaseOrigin.hostname,
-            port: supabaseOrigin.port,
-            pathname: "/storage/v1/object/public/product-images/**",
-            search: "",
-          },
-        ]
-      : [],
+    remotePatterns,
   },
   experimental: {
     // Receipt Server Actions accept files up to 5 MB; leave room for the

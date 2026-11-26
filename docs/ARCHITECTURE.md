@@ -166,10 +166,13 @@ status 200 and includes `<meta name="robots" content="noindex">`. Returning a
 literal 404 requires `generateStaticParams` and data access before streaming,
 which needs real catalog data at build time and is out of scope.
 
-Image URLs come from the public `product-images` bucket. `next.config.ts` derives
-`images.remotePatterns` from `NEXT_PUBLIC_SUPABASE_URL` and scopes it to
-`/storage/v1/object/public/product-images/**`. Set a valid URL at build time;
-`next/image` rejects Supabase Storage URLs otherwise.
+Image URLs come from the public `product-images` bucket. `next.config.ts` allows
+only exact HTTPS hosts on `/storage/v1/object/public/**`: it derives a pattern
+from `NEXT_PUBLIC_SUPABASE_URL` when parseable and always retains the known
+project host `hqemhwhwwjdfzpwqbory.supabase.co` as a fallback because the
+affected build did not expose the variable when the config was evaluated. No
+wildcard hosts, query strings or image-security relaxations are used. Set a
+valid URL at build time for Supabase client calls.
 
 Follow-up: the public SELECT policies grant access `TO anon`. An authenticated
 non-admin needs a policy update once auth exists.

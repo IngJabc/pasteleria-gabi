@@ -155,8 +155,11 @@ Each folder inside `src/` contains a README with its rules and planned contents.
 3. Deploy the production branch.
 
 Note: the public catalog reads active products from Supabase at request time.
-Set a valid `NEXT_PUBLIC_SUPABASE_URL` at build time so `next/image` accepts
-Supabase Storage URLs. Other business flows remain backend or placeholder work.
+`next.config.ts` allows only exact HTTPS Supabase Storage hosts on
+`/storage/v1/object/public/**`, deriving the host from
+`NEXT_PUBLIC_SUPABASE_URL` when available and retaining the known project host
+as a fallback. Set a valid `NEXT_PUBLIC_SUPABASE_URL` at build time for
+Supabase client calls. Other business flows remain backend or placeholder work.
 
 ## Documentation
 

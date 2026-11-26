@@ -407,6 +407,11 @@ migration and rewrites nothing earlier.
     runtime (`npm run worker:unified`) read it from `.env.local`. Unset it in
     deployed environments so the production schedule, idempotency and
     missed-slot behavior stay unchanged.
+  - **Manual registration diagnostics (local, uncommitted):** the admin action
+    classifies service-role/PostgREST failures by SQLSTATE and stable message
+    fragments, returns actionable Spanish errors, and logs only a category plus
+    nullable code. No grant, migration, env or worker behavior changed;
+    Staging/Production verification is pending.
 
 ## Developer automation: autonomous OpenCode workflow (complete)
 

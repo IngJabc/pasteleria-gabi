@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/infrastructure/supabase/admin";
 import { requireActiveAdminId } from "@/features/payments/admin-session";
 import {
   bcvPublicError,
+  classifyBcvFailure,
   deactivatedRateResultSchema,
   deactivateRateSchema,
   invalidRateInputError,
@@ -13,6 +14,8 @@ import {
   rateSnapshotResultSchema,
   registeredRateResultSchema,
   registerRateSchema,
+  type BcvFailureCategory,
+  type BcvRpcFailure,
 } from "./schemas";
 
 /** Administrator-only BCV rate management. No client supplies an admin id. */
@@ -21,17 +24,51 @@ const invalidSessionError = "La sesión del administrador no es válida.";
 const genericError = "No se pudo completar la operación. Inténtalo de nuevo.";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
+type Failure = { ok: false; error: string };
+
+function asFailure(error: unknown): BcvRpcFailure {
+  if (error instanceof Error) {
+    return { message: error.message, code: null };
+  }
+  return { message: String(error), code: null };
+}
+
+/** Logs only a stable category and nullable SQLSTATE, never SQL or credentials. */
+function logFailure(operation: string, failure: BcvRpcFailure, category: BcvFailureCategory): void {
+  console.error(`[${operation}] bcv failure`, {
+    category,
+    code: failure.code ?? null,
+  });
+}
+
+function rpcFailure(operation: string, failure: BcvRpcFailure): Failure {
+  const category = classifyBcvFailure(failure);
+  logFailure(operation, failure, category);
+  return { ok: false, error: bcvPublicError(failure.message, genericError, failure.code) };
+}
 
 async function withAdmin<T>(
   action: (adminId: string, supabase: AdminClient) => Promise<T>,
-): Promise<T | { ok: false; error: string }> {
+): Promise<T | Failure> {
   let adminId: string;
   try {
     adminId = await requireActiveAdminId();
   } catch {
     return { ok: false, error: invalidSessionError };
   }
-  return action(adminId, createSupabaseAdminClient());
+
+  let supabase: AdminClient;
+  try {
+    supabase = createSupabaseAdminClient();
+  } catch (caught) {
+    return rpcFailure("admin-client", asFailure(caught));
+  }
+
+  try {
+    return await action(adminId, supabase);
+  } catch (caught) {
+    return rpcFailure("admin-action", asFailure(caught));
+  }
 }
 
 export type RegisterRateResult =
@@ -83,10 +120,11 @@ export async function registerBcvRate(input: {
       p_idempotency_key: idempotencyKey,
     });
     if (error) {
-      return { ok: false, error: bcvPublicError(error.message, genericError) };
+      return rpcFailure("register_bcv_rate", { message: error.message, code: error.code });
     }
     const result = registeredRateResultSchema.safeParse(data);
     if (!result.success) {
+      logFailure("register_bcv_rate", { message: "unexpected rpc payload" }, "unknown");
       return { ok: false, error: genericError };
     }
     return { ok: true, rateId: result.data.rate_id, idempotent: result.data.idempotent };
@@ -105,10 +143,11 @@ export async function deactivateBcvRate(input: { rateId: number }): Promise<Deac
       p_admin_id: adminId,
     });
     if (error) {
-      return { ok: false, error: bcvPublicError(error.message, genericError) };
+      return rpcFailure("deactivate_bcv_rate", { message: error.message, code: error.code });
     }
     const result = deactivatedRateResultSchema.safeParse(data);
     if (!result.success) {
+      logFailure("deactivate_bcv_rate", { message: "unexpected rpc payload" }, "unknown");
       return { ok: false, error: genericError };
     }
     return { ok: true, rateId: result.data.rate_id, idempotent: result.data.idempotent };
@@ -145,10 +184,11 @@ export async function applyBcvRateToOrder(input: { orderId: number }): Promise<A
       p_admin_id: adminId,
     });
     if (error) {
-      return { ok: false, error: bcvPublicError(error.message, genericError) };
+      return rpcFailure("apply_bcv_rate_to_order", { message: error.message, code: error.code });
     }
     const result = rateSnapshotResultSchema.safeParse(data);
     if (!result.success) {
+      logFailure("apply_bcv_rate_to_order", { message: "unexpected rpc payload" }, "unknown");
       return { ok: false, error: genericError };
     }
     return {

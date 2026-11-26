@@ -680,6 +680,13 @@ can reuse `register_bcv_rate` with a machine `source` without a schema change.
 No network call, secret, cron or worker was added. Implemented additively in
 migration 007, which is applied in Staging and Production.
 
+**Implementation note (manual-registration diagnostics):** server actions map
+PostgREST/service-role failures to actionable Spanish messages by SQLSTATE and
+stable message fragments, and log only a category plus nullable code. This does
+not alter rate rules, grants, idempotency, the `observed_at` uniqueness rule or
+any snapshot behavior; a duplicate observation timestamp still requires a human
+choice and is never retried automatically.
+
 **Integration follow-up (same migration 007):** the canonical checkout path is
 `create_online_order_with_bcv`, which invokes the unchanged `create_online_order`
 and resolves/writes the snapshot in the same transaction (no client rate or

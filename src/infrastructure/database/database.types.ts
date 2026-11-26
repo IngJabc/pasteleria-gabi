@@ -583,6 +583,9 @@ isOneToOne: false
 "hold_order_reservations":
 { Args: { "p_order_id": number }; Returns: number
                            },
+"notify_online_order_formalized":
+{ Args: { "p_order_id": number }; Returns: number
+                           },
 "open_order_correction_window":
 { Args: { "p_order_id": number }; Returns: number
                            },

@@ -67,6 +67,30 @@ export async function getProductStock(productId: number): Promise<number | null>
   return map[productId] ?? null;
 }
 
+/**
+ * Stock for every active product, resolved through the same service-role RPC
+ * wrapper used by the product detail page. The active-id query uses the
+ * request-bound anon client, so no inventory table or secret reaches the
+ * browser and a missing/failing source degrades to an empty map.
+ */
+export async function getActiveProductStockMap(): Promise<PublicStockMap> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("products")
+      .select("id")
+      .eq("is_active", true);
+    if (error || !data) return {};
+
+    const ids = data
+      .map((row) => row.id)
+      .filter((id): id is number => Number.isSafeInteger(id) && id > 0);
+    return await getProductStockMap(ids);
+  } catch {
+    return {};
+  }
+}
+
 const deliveryZoneSchema = z.object({
   id: z.number().int().positive(),
   name: z.string().min(1),

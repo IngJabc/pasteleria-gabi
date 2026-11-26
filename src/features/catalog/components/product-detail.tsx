@@ -8,6 +8,7 @@ import { announceCartFlight } from "@/features/cart/cart-flight";
 import { useToast } from "@/components/ui/toast";
 import type { CatalogProduct } from "../schemas";
 import type { DeliveryZone } from "../public-data";
+import { resolveAddToCartCapacity } from "../add-to-cart-capacity";
 import { formatUsd } from "./price-format";
 import { Button, LiveRegion } from "@/components/ui/ui";
 import { ArrowRightIcon, MinusIcon, PlusIcon } from "@/components/ui/icons";
@@ -28,7 +29,7 @@ export function ProductDetail({
   available: number | null;
   zones: DeliveryZone[];
 }) {
-  const { addItem } = useCart();
+  const { addItem, items } = useCart();
   const { showToast } = useToast();
   const [quantity, setQuantity] = useState(1);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -38,17 +39,37 @@ export function ProductDetail({
   const unitPrice = product.priceUsd;
   const stockKnown = available !== null;
   const outOfStock = stockKnown && available <= 0;
-  const maxQuantity = stockKnown ? Math.max(0, available) : null;
-  const effectiveQuantity =
-    maxQuantity !== null ? Math.min(quantity, Math.max(1, maxQuantity)) : quantity;
+  const inCart = items.find((item) => item.productId === product.id)?.quantity ?? 0;
+  const {
+    remaining,
+    selectorMax,
+    effectiveQuantity,
+    limitReached,
+  } = resolveAddToCartCapacity({ available, inCart, selected: quantity });
+  const availabilityText =
+    available === null
+      ? "Existencias: —"
+      : available <= 0
+        ? "Agotado por ahora"
+        : `${available} disponibles`;
+  const capacityReason = outOfStock
+    ? "Este producto está agotado por ahora."
+    : limitReached
+      ? `Ya tienes ${inCart} ${inCart === 1 ? "unidad" : "unidades"} en la bolsa; quedan ${remaining} unidades disponibles para agregar.`
+      : null;
 
   function handleAdd(event: MouseEvent<HTMLButtonElement>) {
     if (outOfStock) {
       setFeedback("Este producto no tiene existencias disponibles por ahora.");
       return;
     }
-    const qty =
-      maxQuantity !== null ? Math.min(quantity, Math.max(1, maxQuantity)) : quantity;
+    if (limitReached || effectiveQuantity <= 0) {
+      setFeedback(
+        capacityReason ?? "No hay más unidades disponibles para agregar.",
+      );
+      return;
+    }
+    const qty = effectiveQuantity;
     addItem(
       {
         productId: product.id,
@@ -142,11 +163,8 @@ export function ProductDetail({
           <p className="text-sm text-muted">Aún no hay reseñas publicadas.</p>
         )}
         <p className="font-bold text-ink">
-          {available === null
-            ? "Existencias: —"
-            : available <= 0
-              ? "Agotado por ahora"
-              : `${available} disponibles`}
+          {availabilityText}
+          {stockKnown && inCart > 0 ? ` · ${inCart} en la bolsa` : ""}
         </p>
 
         <p className="max-w-prose leading-7 text-ink">{product.description}</p>
@@ -169,17 +187,21 @@ export function ProductDetail({
               aria-live="polite"
               className="min-w-8 text-center font-display text-lg font-extrabold text-plum"
             >
-              {outOfStock ? 0 : effectiveQuantity}
+              {limitReached ? 0 : effectiveQuantity}
             </output>
             <Button
               variant="secondary"
-              aria-label="Aumentar cantidad"
+              aria-label={
+                selectorMax !== null
+                  ? `Aumentar cantidad (hasta ${remaining} disponibles para agregar)`
+                  : "Aumentar cantidad"
+              }
               onClick={() =>
                 setQuantity((value) =>
-                  maxQuantity !== null ? Math.min(maxQuantity, value + 1) : value + 1,
+                  selectorMax !== null ? Math.min(selectorMax, value + 1) : value + 1,
                 )
               }
-              disabled={outOfStock || (maxQuantity !== null && effectiveQuantity >= maxQuantity)}
+              disabled={outOfStock || (selectorMax !== null && effectiveQuantity >= selectorMax)}
               className="min-h-11 px-3"
             >
               <PlusIcon />
@@ -190,16 +212,24 @@ export function ProductDetail({
         <Button
           onClick={handleAdd}
           className="self-start"
-          disabled={outOfStock}
-          title={outOfStock ? "Sin existencias disponibles por ahora." : undefined}
+          disabled={outOfStock || limitReached}
+          title={
+            outOfStock
+              ? "Sin existencias disponibles por ahora."
+              : limitReached
+                ? `Ya agregaste ${inCart} ${inCart === 1 ? "unidad" : "unidades"}; no hay más disponibles para agregar.`
+                : undefined
+          }
         >
           {outOfStock
             ? "Agotado por ahora"
-            : `Agregar al carrito · ${formatUsd(unitPrice * effectiveQuantity)}`}
+            : limitReached
+              ? "Sin unidades disponibles para agregar"
+              : `Agregar al carrito · ${formatUsd(unitPrice * effectiveQuantity)}`}
         </Button>
 
         <LiveRegion className="text-pink">
-          {outOfStock ? "Este producto está agotado por ahora." : feedback}
+          {capacityReason ?? feedback}
         </LiveRegion>
 
         <div className="mt-2 rounded-section bg-mint p-6">

@@ -53,10 +53,17 @@ Los precios se publicarán en USD.
 El cliente podrá consultar productos y agregar distintas variedades al carrito.
 
 **Interacción local del carrito:** al pulsar «Agregar al carrito» aparece una
-insignia decorativa `+N` que viaja desde el botón hasta el contador de la bolsa.
-El efecto usa solo transformaciones y opacidad, no crea desplazamiento de la
-página y se omite por completo cuando el dispositivo solicita movimiento
-reducido. No modifica totales, precios, inventario ni la confirmación existente.
+insignia decorativa `+N` firme y legible que viaja desde el botón hasta la bolsa.
+El efecto usa solo transformaciones: la insignia escala levemente al acercarse,
+la bolsa rebota sutilmente al recibirla y todo se omite con movimiento reducido.
+No crea desplazamiento de la página. El botón respeta las unidades mostradas como
+disponibles: cuenta las del mismo producto ya presentes en la bolsa y se
+desactiva cuando no quedan. La insignia no cambia totales, precios, inventario
+ni la confirmación existente; el servidor sigue validando el stock al final.
+El botón `+` de `/carrito` usa el mismo stock mostrado por el servidor: se
+desactiva en el límite y explica el motivo en español. Si el stock se desconoce,
+mantiene el mismo comportamiento que en el detalle de producto y deja la
+validación final al servidor.
 
 ## 4. Moneda y tasa de cambio
 
@@ -394,7 +401,7 @@ El panel permitirá abrir conversaciones mediante enlaces de WhatsApp con mensaj
 
 Se utilizará Supabase Realtime para notificar a ambos administradores cuando:
 
-- Se cree un pedido online.
+- Se formalice un pedido online al pulsar «Hacer pedido» en `/checkout/pago`.
 - Se envíe un comprobante.
 - Se produzcan actualizaciones relevantes de pedidos y pagos.
 - Se supere el plazo de 24 horas de revisión de un comprobante (sección 14): se notificará a todos los administradores activos y se repetirá cada 15 minutos hasta que ese comprobante sea aprobado o rechazado, sin cancelar el pedido ni liberar inventario. Ejecuciones simultáneas del proceso de notificación no deben generar avisos duplicados para el mismo comprobante e intervalo.
@@ -405,7 +412,16 @@ Las notificaciones serán informativas. La fuente de verdad siempre será la bas
 registran en `public.admin_general_notifications` (migración local `016`, todavía
 no aplicada en Staging ni Producción) con claves deterministas por evento, RLS
 limitado al administrador destinatario y actualización en Realtime sin sondeo. Cubren pedidos online,
-comprobantes nuevos o corregidos y reseñas de producto. El plazo de 24 horas y el aviso
+comprobantes nuevos o corregidos y reseñas de producto.
+
+El aviso `new_order` se emite al pulsar «Hacer pedido» en `/checkout/pago`, no
+al confirmar contacto y entrega en `/checkout/entrega`. En pago digital lo dispara
+el vínculo del comprobante; en pago en tienda lo envía la RPC
+`notify_online_order_formalized`. La migración local `018` (también sin aplicar)
+mueve el disparador y conserva la clave `new_order:<order_id>` y el resumen
+«Nuevo pedido online recibido.».
+
+El plazo de 24 horas y el aviso
 cada 15 minutos de la sección 14 siguen implementados por separado en
 `admin_notifications` y no se modifican.
 

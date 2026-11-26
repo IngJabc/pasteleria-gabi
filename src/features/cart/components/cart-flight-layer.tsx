@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
+  CART_TARGET_SELECTOR,
+  MAX_VISIBLE_CART_FLIGHTS,
+  cartFlightAnimationKeyframes,
+  cartFlightBounceKeyframes,
   cartFlightCenter,
+  cartFlightLaneOffset,
   isCartFlightPointVisible,
   prefersReducedCartFlightMotion,
   shouldAnimateCartFlight,
@@ -13,8 +18,47 @@ import {
 
 const FLIGHT_DURATION_MS = 600;
 const FLIGHT_EASING = "cubic-bezier(0.22, 0.8, 0.3, 1)";
+const CART_TARGET_LANE_FACTOR = 0.35;
+const CART_BOUNCE_DURATION_MS = 260;
 
-type RenderedFlight = CartFlight & { target: CartFlightPoint };
+/** At most one bounce per bag element; the key is held weakly. */
+const activeBounces = new WeakMap<HTMLElement, Animation>();
+
+type RenderedFlight = CartFlight & {
+  target: CartFlightPoint;
+  lane: CartFlightPoint;
+};
+
+function renderedStart(flight: RenderedFlight): CartFlightPoint {
+  return {
+    x: flight.origin.x + flight.lane.x,
+    y: flight.origin.y + flight.lane.y,
+  };
+}
+
+function renderedEnd(flight: RenderedFlight): CartFlightPoint {
+  return {
+    x: flight.target.x + flight.lane.x * CART_TARGET_LANE_FACTOR,
+    y: flight.target.y + flight.lane.y * CART_TARGET_LANE_FACTOR,
+  };
+}
+
+function bounceCartTarget(): void {
+  if (prefersReducedCartFlightMotion()) return;
+
+  const bag = document.querySelector<HTMLElement>(CART_TARGET_SELECTOR);
+  if (!bag || typeof bag.animate !== "function") return;
+
+  activeBounces.get(bag)?.cancel();
+  const bounce = bag.animate(cartFlightBounceKeyframes(), {
+    duration: CART_BOUNCE_DURATION_MS,
+    easing: "ease-out",
+  });
+  activeBounces.set(bag, bounce);
+  bounce.onfinish = () => {
+    if (activeBounces.get(bag) === bounce) activeBounces.delete(bag);
+  };
+}
 
 function CartFlightChip({
   flight,
@@ -36,21 +80,19 @@ function CartFlightChip({
       return;
     }
 
-    const dx = flight.target.x - flight.origin.x;
-    const dy = flight.target.y - flight.origin.y;
-    // Pixel-only transforms keep the WAAPI animation out of the `pending`
-    // state that percentage `calc()` translations can cause in Chromium.
-    const animation = chip.animate(
-      [
-        { opacity: 1, transform: "translate(0px, 0px) scale(1)" },
-        {
-          opacity: 0,
-          transform: `translate(${dx}px, ${dy}px) scale(0.85)`,
-        },
-      ],
-      { duration: FLIGHT_DURATION_MS, easing: FLIGHT_EASING, fill: "forwards" },
-    );
-    animation.onfinish = () => onDone(flight.id);
+    const start = renderedStart(flight);
+    const end = renderedEnd(flight);
+    // Pixel-only translations from the shared keyframe helper stay out of the
+    // `pending` state that percentage calc translations can cause in Chromium.
+    const animation = chip.animate(cartFlightAnimationKeyframes(start, end), {
+      duration: FLIGHT_DURATION_MS,
+      easing: FLIGHT_EASING,
+      fill: "forwards",
+    });
+    animation.onfinish = () => {
+      bounceCartTarget();
+      onDone(flight.id);
+    };
 
     return () => {
       animation.onfinish = null;
@@ -58,20 +100,21 @@ function CartFlightChip({
     };
   }, [flight, onDone]);
 
-  // The chip is 32px (size-8); negative margins center it without putting a
-  // percentage calc into the animated transform.
+  // The chip is 36px (size-9); fixed negative margins center it without
+  // changing the pixel-only animated transform.
+  const start = renderedStart(flight);
   const style = {
-    left: `${flight.origin.x}px`,
-    top: `${flight.origin.y}px`,
-    marginLeft: "-16px",
-    marginTop: "-16px",
+    left: `${start.x}px`,
+    top: `${start.y}px`,
+    marginLeft: "-18px",
+    marginTop: "-18px",
   } as CSSProperties;
 
   return (
     <span
       ref={chipRef}
       aria-hidden="true"
-      className="absolute grid size-8 place-items-center rounded-full border-2 border-white bg-lavender font-display text-sm font-extrabold text-plum shadow-lg"
+      className="absolute grid size-9 place-items-center rounded-full border-2 border-white bg-plum font-display text-base font-black text-white"
       style={style}
     >
       {flight.label}
@@ -84,12 +127,18 @@ export function CartFlightLayer() {
   const [flights, setFlights] = useState<RenderedFlight[]>([]);
 
   const removeFlight = useCallback((id: number) => {
-    setFlights((current) => current.filter((item) => item.id !== id));
+    setFlights((current) => {
+      const remaining: RenderedFlight[] = [];
+      for (const item of current) {
+        if (item.id !== id) remaining.push(item);
+      }
+      return remaining;
+    });
   }, []);
 
   useEffect(() => {
     return subscribeToCartFlights((flight) => {
-      const bag = document.querySelector<HTMLElement>("[data-cart-target]");
+      const bag = document.querySelector<HTMLElement>(CART_TARGET_SELECTOR);
       const target = cartFlightCenter(bag?.getBoundingClientRect() ?? null);
       // The bag can be scrolled out of view while the add button is visible.
       // In that case the chip flies toward the bag's real coordinates and exits
@@ -105,7 +154,15 @@ export function CartFlightLayer() {
       ) {
         return;
       }
-      setFlights((current) => [...current, { ...flight, target }]);
+      // The lane comes from the flight id, not the current array position, so
+      // rapid adds stay distinct even if an older chip was already removed.
+      const lane = cartFlightLaneOffset(flight.id);
+      setFlights((current) => {
+        const next = [...current, { ...flight, target, lane }];
+        return next.length > MAX_VISIBLE_CART_FLIGHTS
+          ? next.slice(-MAX_VISIBLE_CART_FLIGHTS)
+          : next;
+      });
     });
   }, []);
 

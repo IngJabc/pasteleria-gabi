@@ -82,10 +82,10 @@ src/app/
   service-role client only for `get_product_stock`, returning graceful Spanish
   `unavailable` results without raw database errors.
 - Two-admin auth provisioning remains pending (B2). All repository migrations
-  **except migrations 016 and 017** are applied in Staging and Production,
-  including migration 005 and migration 015; both new migrations are local-only
-  and deployment of the unified worker is pending. Admin reads still show honest
-  unavailable states where runtime or business data is missing.
+  **except migrations 016, 017 and 018** are applied in Staging and Production,
+  including migration 005 and migration 015; all three new migrations are
+  local-only and deployment of the unified worker is pending. Admin reads still
+  show honest unavailable states where runtime or business data is missing.
 
 Route map (the Phase column records the original roadmap phase):
 
@@ -262,14 +262,25 @@ The two tables remain independent, but `/admin/notificaciones` is their single
 presentation inbox; DECISIONS #41 records the six #40 blockers and #42 records
 the unification, combined badge, clickable destinations and Realtime decision.
 
-- **Storage/write path:** `public.admin_general_notifications` (migration 016,
-  local-only) is written by `AFTER INSERT` triggers on online `orders` and
-  `product_reviews` and by an `AFTER UPDATE OF payment_id` trigger on
+- **Storage/write path:** migration 016 originally wrote
+  `public.admin_general_notifications` with `AFTER INSERT` triggers on online
+  `orders` and `product_reviews` and an `AFTER UPDATE OF payment_id` trigger on
   `receipt_submissions` guarded by `OLD.payment_id IS NULL AND NEW.payment_id IS
   NOT NULL` (migrations 006/011 link evidence after `hold_order_reservations`
   created the row). Private `SECURITY DEFINER` triggers call one private fanout
   helper, inserting one row per active administrator inside the originating
   transaction; there is no worker, polling loop or rewrite of older RPCs.
+- **New-order timing (local code, migration 018 unapplied):** local-only
+  `018_formalized_order_notifications.sql` drops migration 016's `new_order`
+  trigger on `AFTER INSERT ON public.orders` and its old function. Digital
+  «Hacer pedido» emits through `AFTER UPDATE OF payment_id` on
+  `receipt_submissions` when the evidence link is added; pay-in-store
+  «Hacer pedido» calls the service-role-only
+  `notify_online_order_formalized` RPC after validation. The event key stays
+  `new_order:<order_id>` and the summary stays «Nuevo pedido online recibido.»;
+  no order, stock, reservation, payment, RLS, policy, publication or
+  replica-identity behavior changes. Runtime behavior changes only after someone
+  applies 018 remotely.
 - **Server layer:** `src/features/admin/general-notifications.ts` is a
   `"use server"` + `server-only` module. Every read/action resolves the admin via
   `requireActiveAdminId()`, uses the request-bound session client, filters by
@@ -295,6 +306,9 @@ the unification, combined badge, clickable destinations and Realtime decision.
   `admin_id`, performs one delayed reconnect per channel on error/timeout, and
   debounces `router.refresh()`. `payload.old` and UPDATE delivery are not used;
   there is no polling. The database remains the source of truth.
+- **Readiness:** local Realtime wiring is complete in code; remote delivery still
+  depends on applying migrations 016/017 and confirming both tables belong to
+  `supabase_realtime`.
 - **State:** migrations 016 and 017 exist locally and have **not** been applied
   remotely; 017 only publishes `admin_notifications` to Realtime (no RLS, grant,
   trigger, RPC or replica-identity change). Behavioral SQL tests were skipped
@@ -311,11 +325,34 @@ the unification, combined badge, clickable destinations and Realtime decision.
   in `SiteHeader`; it resolves `[data-cart-target]` at flight time, computes the
   target center, skips on reduced motion, a missing endpoint or an offscreen
   launch point, and renders `aria-hidden` chips in a `pointer-events-none fixed inset-0 z-[60]`
-  overlay. The 32px chip is centered with negative margins and animates with the
-  Web Animations API using pixel-only `translate()` and opacity keyframes (600 ms),
-  then unmounts on finish. Percentage `calc()` transforms are deliberately avoided
-  because they left the animation `pending` in Chromium; no custom keyframes are
-  needed and the chip never occupies header space. Toasts remain at `z-[80]`.
+  overlay. The 36px chip stays at opacity `1` with high-contrast plum/white styling
+  and `font-black` weight; it scales `1 → 1.08 → 1` only near the bag and never
+  fades, blurs, glows or leaves trails. WAAPI drives pixel-only `translate()` and
+  `scale()` keyframes; no custom CSS keyframes, filter, `calc()` transform or new
+  dependency is used. Flight ids assign deterministic lane offsets and cap
+  simultaneous flights at four, so rapid adds start at origin plus lane and end
+  at cart center plus a reduced lane offset. A real animation finish triggers a
+  transform-only WAAPI bag bounce (`scale 1 → 1.06 → 1`, `translateY 0 → -2px → 0`);
+  another arrival cancels and restarts that bounce instead of stacking it.
+  Reduced motion skips both effects. The chip never occupies header space, and
+  toasts remain at `z-[80]`. The decorative chip does not change cart quantities,
+  prices, stock, checkout, localStorage, server validation or the existing toast.
+  The add action now derives remaining capacity from server-provided `available`
+  minus the same product's quantity in the local bag, and the server stays the
+  final authority.
+- **Cart stock guard boundary (ADR #44):** the server renders an active-product
+  stock map for `/carrito` through `getActiveProductStockMap()` in
+  `src/features/catalog/public-data.ts`. The server-only helper selects active
+  product ids, reuses `getProductStockMap` and the service-role-only
+  `get_product_stock` RPC, reads no inventory tables directly, and fails closed
+  to `{}`. The client `+` control uses the pure, environment-neutral
+  `canIncreaseCartItemQuantity(available, quantity)` helper; it disables at known
+  stock limits, gives an accurate accessible label, shows a Spanish `LiveRegion`
+  explanation, and leaves unknown stock to the server-side fallback. The `-`
+  control stays enabled so shoppers can correct stale over-stock carts. Browser
+  code reads no inventory tables, and prices, totals, checkout links, the
+  `localStorage` schema, cart context, server validation and reservations stay
+  unchanged.
 - **Mobile navigation:** `SiteHeader` derives `mobileNavOpen` from `usePathname()`
   so a route change closes the menu without a cascading state update in an
   effect; Escape closes it and returns focus to the SVG toggle. The panel is an
@@ -335,3 +372,14 @@ the unification, combined badge, clickable destinations and Realtime decision.
   reconnect per channel, cleanup and INSERT-only configs remain exactly as #42.
   There is no polling, permission prompt, service worker, VAPID, e-mail,
   WhatsApp or other external delivery path.
+
+**Final local validation (ADR #44 cart stock guard and ADR #45 new-order
+timing):** the combined focused Vitest run passed **16 files and 158 tests**,
+including cart-only **4 files and 47 tests** and migration-018-focused **5 files
+and 47 tests**. ESLint returned no output for all **22 changed or added
+`.ts`/`.tsx` files**, `npm run typecheck` passed, `npm run build` passed with
+Next.js 16.4.6 and **25 routes**, and `git diff --check` was clean. `npm test`
+remains red for three unchanged unrelated pre-existing failures listed in
+`TASKS.md`: **546 of 549 tests and 57 of 59 files passed**. Migrations 016, 017
+and 018 remain local-only; remote application and runtime Realtime validation
+remain human gates.

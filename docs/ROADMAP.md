@@ -7,10 +7,11 @@ before its phase starts.
 Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
 > **Current migration status:** all repository migrations **except migrations
-> 016 and 017** are applied in both Supabase Staging and Supabase Production,
-> including migration 005 and migration 015.
-> `016_general_admin_notifications.sql` and
-> `017_unified_notifications_realtime.sql` are local-only migrations and have
+> 016, 017 and 018** are applied in both Supabase Staging and Supabase
+> Production, including migration 005 and migration 015.
+> `016_general_admin_notifications.sql`,
+> `017_unified_notifications_realtime.sql` and
+> `018_formalized_order_notifications.sql` are local-only migrations and have
 > **not** been applied remotely. Branch notes that say a branch did not apply
 > migrations describe that branch only.
 
@@ -349,6 +350,17 @@ phase gate therefore remains open.
   reconnect per channel and debounced `router.refresh()`, no polling.
 - **Exclusions (unchanged):** no customer-facing notifications; no email; no
   WhatsApp; no BCV worker changes; no OQ-16 behavior/trigger/RPC changes.
+- [x] **New-order notification timing (local bug fix; implemented and validated
+  locally):** the `new_order` alert no longer fires at «Confirmar entrega» on
+  `/checkout/entrega`.
+  Local migration `018_formalized_order_notifications.sql` replaces 016's
+  `AFTER INSERT ON orders` trigger with an evidence-link trigger on
+  `receipt_submissions` for digital «Hacer pedido» and a service-role-only RPC
+  for pay-in-store «Hacer pedido». The key `new_order:<order_id>` and Spanish
+  summary stay unchanged; early rows remain history; no order, stock,
+  reservation, payment, RLS, policy, publication or replica-identity behavior
+  changes. Migration 018 remains local-only; Staging and Production application
+  and runtime verification stay open remote gates.
 - [x] **Local UI improvements (ADR #43):** decorative `+N` cart chip flying from
   the add button to the bag in a fixed overlay using the Web Animations API
   (reduced-motion aware, transform/opacity only); accessible 44×44 SVG hamburger
@@ -357,11 +369,55 @@ phase gate therefore remains open.
   opened for either source; and a Spanish in-app toast for deduplicated
   Realtime INSERTs. No new migration or external channel; cart and menu were
   exercised in the local browser, with no remote runtime verification.
-- **Phase gate still open:** migrations 016 and 017 have **not** been applied in
+  - **Current cart visual repair (ADR #43 local amendment; validation pending):**
+    keep the `+N` chip at opacity `1` with high-contrast plum/white styling and
+    `font-black` weight; scale `1 → 1.08 → 1` only near the bag. Flight ids assign
+    four deterministic lane offsets, so rapid adds start at origin plus lane and
+    end at cart center plus a reduced lane offset. A real WAAPI finish triggers a
+    transform-only bag bounce (`scale 1 → 1.06 → 1`, `translateY 0 → -2px → 0`);
+    another arrival cancels and restarts it. Reduced motion skips both effects;
+    no fade, blur, glow, trails, filter, `calc()` transform, custom CSS
+    keyframes or new dependency is introduced; the chip does not change cart data.
+  - **Storefront stock guards for product detail and cart (local bug fix;
+    implemented and validated locally):** `/productos/[slug]` now uses
+    `resolveAddToCartCapacity` for both the add button and the `+/-` selector.
+    `/carrito` now uses the server-rendered active-product stock map and
+    `canIncreaseCartItemQuantity` for its `+`
+    control. Remaining capacity is server-provided `available` minus that
+    product's quantity in the local bag. Quantity controls stop at remaining
+    capacity, and the `+` control disables with an accurate label and Spanish
+    feedback at zero. The cart `-` control stays enabled for stale over-stock
+    carts. Unknown stock (`available === null`) keeps the no-client-cap fallback
+    and server checkout revalidation. No inventory write, price, checkout,
+    reservation or localStorage schema change; remote validation stays open.
+  - **Final local validation for the cart stock guard and new-order timing:**
+    the combined focused Vitest run passed **16 files and 158 tests**, including
+    cart-only **4 files and 47 tests** and migration-018-focused **5 files and
+    47 tests**. ESLint returned no output for all **22 changed or added
+    `.ts`/`.tsx` files**, `npm run typecheck` passed, `npm run build` passed with
+    Next.js 16.4.6 and **25 routes**, and `git diff --check` was clean. `npm test`
+    remains red for three unchanged unrelated pre-existing failures listed in
+    `TASKS.md`: **546 of 549 tests and 57 of 59 files passed**. Migrations 016,
+    017 and 018 remain local-only; remote application and runtime Realtime
+    validation remain human gates.
+- **Phase gate still open:** migrations 016, 017 and 018 have **not** been applied in
   Staging or Production; behavioral SQL tests were skipped locally (no PostgreSQL binaries);
   RLS/fanout/mark-state and Realtime INSERT delivery need runtime validation in
   Staging. OQ-16 worker deployment/activation remains a separate human/remote
   track. See DECISIONS #40/#41/#42 and TASKS “Phase 6 — General Admin Notifications”.
+- [ ] **Admin Realtime remote-validation checklist (investigation, not a fix):**
+  Migrations 016 and 017 are local-only and unapplied remotely. Missing publication
+  membership stops Postgres Changes events, so the inbox and badge change only
+  after a reload runs the server read path. This is the leading cause of the
+  reported admin-panel delay. Complete this human gate in order:
+  1. Apply and confirm migrations 016 and 017 in Staging, then Production.
+  2. Confirm `admin_general_notifications` and `admin_notifications` are in `supabase_realtime`.
+  3. Trigger real general events for both active admins.
+  4. Verify INSERT delivery, the Spanish toast and inbox/badge update without a reload.
+  5. Verify RLS and `admin_id` filtering.
+  Keep the INSERT-only/no-pull design with no polling. Clarify whether the report
+  covers general rows or the unified inbox including OQ-16 SLA rows; OQ-16 worker
+  deployment stays a separate track.
 - [x] **Supabase Realtime publication — backend implemented locally:** additive
   migration `008_realtime_publication.sql` adds the existing `orders`, `payments`
   and `cancellation_requests` tables to the managed `supabase_realtime`

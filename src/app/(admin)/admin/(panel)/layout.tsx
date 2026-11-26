@@ -5,7 +5,10 @@ import {
   AdminShell,
 } from "@/components/admin/admin-shell";
 import { ToastProvider } from "@/components/ui/toast";
+import { getAdminGeneralUnreadCount } from "@/features/admin/general-notifications";
 import { getUnreadAdminNotificationCount } from "@/features/admin/notifications";
+import { UnifiedNotificationsRealtime } from "@/features/admin/components/general-notifications-realtime";
+import { combineUnreadCounts } from "@/features/admin/unified-notifications-helpers";
 import {
   AdminSessionError,
   requireActiveAdminId,
@@ -25,20 +28,28 @@ export default async function AdminLayout({
 }: {
   children: ReactNode;
 }) {
+  let adminId: string;
   try {
-    await requireActiveAdminId();
+    adminId = await requireActiveAdminId();
   } catch (error) {
     if (!(error instanceof AdminSessionError)) throw error;
     return <AdminAccessMessage message={error.message} />;
   }
 
-  // Real unread rows only. A null result renders no badge at all.
-  const unread = await getUnreadAdminNotificationCount();
-  const alertsLabel = unread && unread > 0 ? `${unread} alertas nuevas` : undefined;
+  // Real unread rows only. Each source degrades independently; if both are
+  // unavailable the sidebar renders no badge at all.
+  const [generalUnread, slaUnread] = await Promise.all([
+    getAdminGeneralUnreadCount(),
+    getUnreadAdminNotificationCount(),
+  ]);
+  const unreadCount = combineUnreadCounts(generalUnread, slaUnread);
 
   return (
     <ToastProvider>
-      <AdminShell alertsLabel={alertsLabel}>{children}</AdminShell>
+      <UnifiedNotificationsRealtime adminId={adminId} />
+      <AdminShell unreadCount={unreadCount}>
+        {children}
+      </AdminShell>
     </ToastProvider>
   );
 }

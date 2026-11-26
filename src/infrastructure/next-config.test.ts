@@ -1,8 +1,14 @@
 import type { NextConfig } from "next";
+import { matchRemotePattern } from "next/dist/shared/lib/match-remote-pattern";
 import { describe, expect, it, vi } from "vitest";
 
-const KNOWN_HOSTNAME = "hqemhwhwwjdfzpwqbory.supabase.co";
-const PUBLIC_PATHNAME = "/storage/v1/object/public/**";
+const EXPECTED_PATTERN = {
+  protocol: "https",
+  hostname: "*.supabase.co",
+  port: "",
+  pathname: "/storage/v1/object/public/**",
+  search: "",
+};
 
 type RemotePatternLike = {
   protocol?: string;
@@ -11,6 +17,25 @@ type RemotePatternLike = {
   pathname?: string;
   search?: string;
 };
+
+const ENVIRONMENTS: Array<[string, string | undefined]> = [
+  ["the env var is missing", undefined],
+  [
+    "the env var names the previous production project",
+    "https://hqemhwhwwjdfzpwqbory.supabase.co",
+  ],
+  [
+    "the env var names the staging project",
+    "https://htuabezpfolwsqblckmx.supabase.co",
+  ],
+  ["the env var is invalid", "not-a-url"],
+  [
+    "the env var is not https",
+    "http://htuabezpfolwsqblckmx.supabase.co",
+  ],
+  ["the env var contains a wildcard", "https://*.supabase.co"],
+  ["the env var names a non-Supabase host", "https://example.com"],
+];
 
 async function loadConfig(value: string | undefined): Promise<NextConfig> {
   const previous = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -50,79 +75,70 @@ function patterns(config: NextConfig): RemotePatternLike[] {
   });
 }
 
-function expectKnownPattern(pattern: RemotePatternLike): void {
-  expect(pattern).toEqual({
-    protocol: "https",
-    hostname: KNOWN_HOSTNAME,
-    port: "",
-    pathname: PUBLIC_PATHNAME,
-    search: "",
-  });
-}
-
 describe("next.config images.remotePatterns", () => {
-  it("falls back to the exact public Supabase path when the env var is missing", async () => {
-    const config = await loadConfig(undefined);
-    const remotePatterns = patterns(config);
+  it.each(ENVIRONMENTS)(
+    "keeps exactly one bounded Supabase Storage pattern when %s",
+    async (_description, value) => {
+      const config = await loadConfig(value);
 
-    expect(remotePatterns).toHaveLength(1);
-    expectKnownPattern(remotePatterns[0]);
-  });
+      expect(patterns(config)).toEqual([EXPECTED_PATTERN]);
+    },
+  );
 
-  it("dedupes when the env var names the same https origin", async () => {
-    const config = await loadConfig(`https://${KNOWN_HOSTNAME}`);
-    const remotePatterns = patterns(config);
+  it("matches both Supabase projects and rejects non-public or non-Supabase URLs", () => {
+    const pattern = EXPECTED_PATTERN as Parameters<typeof matchRemotePattern>[0];
 
-    expect(remotePatterns).toHaveLength(1);
-    expectKnownPattern(remotePatterns[0]);
-  });
-
-  it("keeps both patterns for a different valid Supabase origin", async () => {
-    const config = await loadConfig("https://other-project.supabase.co");
-    const remotePatterns = patterns(config);
-
-    expect(remotePatterns).toHaveLength(2);
-    expectKnownPattern(remotePatterns[0]);
-    expect(remotePatterns[1]).toEqual({
-      protocol: "https",
-      hostname: "other-project.supabase.co",
-      port: "",
-      pathname: PUBLIC_PATHNAME,
-      search: "",
-    });
-  });
-
-  it("ignores an invalid env URL while keeping the exact pattern", async () => {
-    const config = await loadConfig("not-a-url");
-    const remotePatterns = patterns(config);
-
-    expect(remotePatterns).toHaveLength(1);
-    expectKnownPattern(remotePatterns[0]);
-  });
-
-  it("does not derive an insecure pattern from a non-https env URL", async () => {
-    const config = await loadConfig("http://other-project.supabase.co");
-    const remotePatterns = patterns(config);
-
-    expect(remotePatterns).toHaveLength(1);
-    expectKnownPattern(remotePatterns[0]);
-  });
-
-  it("rejects wildcard or metacharacter hostnames from the env URL", async () => {
-    const config = await loadConfig("https://*.supabase.co");
-    const remotePatterns = patterns(config);
-
-    expect(remotePatterns).toHaveLength(1);
-    expectKnownPattern(remotePatterns[0]);
+    expect(
+      matchRemotePattern(
+        pattern,
+        new URL(
+          "https://htuabezpfolwsqblckmx.supabase.co/storage/v1/object/public/product-images/1/a.png",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      matchRemotePattern(
+        pattern,
+        new URL(
+          "https://hqemhwhwwjdfzpwqbory.supabase.co/storage/v1/object/public/product-images/1/a.png",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      matchRemotePattern(
+        pattern,
+        new URL("https://example.com/storage/v1/object/public/product-images/1/a.png"),
+      ),
+    ).toBe(false);
+    expect(
+      matchRemotePattern(
+        pattern,
+        new URL(
+          "https://htuabezpfolwsqblckmx.supabase.co/storage/v1/object/private/product-images/1/a.png",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      matchRemotePattern(
+        pattern,
+        new URL(
+          "https://htuabezpfolwsqblckmx.supabase.co/storage/v1/object/public/product-images/1/a.png?v=1",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("does not relax image security or change unrelated config", async () => {
     const config = await loadConfig(undefined);
     const remotePatterns = patterns(config);
 
-    expect(
-      remotePatterns.every(({ hostname }) => !hostname.includes("*")),
-    ).toBe(true);
+    expect(remotePatterns).toEqual([EXPECTED_PATTERN]);
+    expect(config.images).toEqual({ remotePatterns: [EXPECTED_PATTERN] });
+    expect(remotePatterns[0].hostname).toBe("*.supabase.co");
+    expect(remotePatterns[0].hostname).not.toContain("**");
+    expect(remotePatterns[0].pathname).toBe("/storage/v1/object/public/**");
+    expect(remotePatterns[0].port).toBe("");
+    expect(remotePatterns[0].search).toBe("");
     expect(config.images?.domains).toBeUndefined();
     expect(config.images?.unoptimized).toBeUndefined();
     expect(config.images?.dangerouslyAllowSVG).toBeUndefined();

@@ -51,6 +51,8 @@ src/app/
     ├── comprobantes/page.tsx        # /admin/comprobantes  receipt review
     ├── pagos/externo/page.tsx       # /admin/pagos/externo external payment
     ├── productos/page.tsx           # /admin/productos     product CRUD
+    ├── resenas/page.tsx             # /admin/resenas       review moderation
+    ├── notificaciones/page.tsx      # /admin/notificaciones unified inbox
     ├── inventario/page.tsx          # /admin/inventario    inventory
     ├── punto-de-venta/page.tsx      # /admin/punto-de-venta  POS
     ├── cancelaciones/page.tsx       # /admin/cancelaciones cancellations
@@ -60,13 +62,17 @@ src/app/
 - The `(storefront)` route group will hold all customer routes:
   catalog, cart, checkout, private order tracking.
 - The `(admin)/admin` segment holds the private panel for the two administrators
-  (SPEC §15). All 11 admin routes listed above are implemented locally. The
+  (SPEC §15). All admin routes listed above are implemented locally. The
   shared `src/app/(admin)/admin/layout.tsx` gate resolves authorization before
   any frame renders: it uses the request-bound server client to check
   `auth.getUser()` and `administrators.is_active`, then fails closed. It never
   trusts `user_metadata`. The layout sets `robots: noindex, nofollow` and
-  `instant = false`, and renders the alerts pill only from real
-  `admin_notifications` rows via `getUnreadAdminNotificationCount()`.
+  `instant = false`. There are still **two durable unread sources** in the
+  database, but one presentation: the layout sums the real counts from
+  `getAdminGeneralUnreadCount()` and `getUnreadAdminNotificationCount()` via
+  `combineUnreadCounts()`. A single accessible **Notificaciones** sidebar badge
+  is the only unread indicator; the old topbar alerts pill was removed
+  (DECISIONS #42).
 - The same separation is mirrored in code: customer features and admin modules
   are separate folders under `src/features/`, so an admin-only capability can
   never be mounted into the storefront by accident. Admin work lives in
@@ -76,9 +82,10 @@ src/app/
   service-role client only for `get_product_stock`, returning graceful Spanish
   `unavailable` results without raw database errors.
 - Two-admin auth provisioning remains pending (B2). All repository migrations
-  are applied in Staging and Production, including migration 005 and migration
-  015; deployment of the unified worker is pending. Admin reads still show
-  honest unavailable states where runtime or business data is missing.
+  **except migrations 016 and 017** are applied in Staging and Production,
+  including migration 005 and migration 015; both new migrations are local-only
+  and deployment of the unified worker is pending. Admin reads still show honest
+  unavailable states where runtime or business data is missing.
 
 Route map (the Phase column records the original roadmap phase):
 
@@ -92,6 +99,8 @@ Route map (the Phase column records the original roadmap phase):
 | `/admin/pedidos`, `/admin/pedidos/[id]`, `/admin/pedidos/detalle` | Orders list, detail, sidebar helper | 3–5 | Implemented locally |
 | `/admin/comprobantes`, `/admin/pagos/externo` | Receipt review, external cash payment | 5 | Implemented locally |
 | `/admin/productos` | Session-guarded product CRUD and image management | 1 | Implemented locally |
+| `/admin/resenas` | Product review moderation (target of review notifications) | 9 | Implemented locally |
+| `/admin/notificaciones` | Unified general + SLA notification inbox | 6 | Implemented locally (migrations 016/017 not applied) |
 | `/admin/inventario`, `/admin/punto-de-venta` | Inventory, point of sale | 2, 5 | Implemented locally |
 | `/admin/cancelaciones`, `/admin/configuracion` | Cancellations, settings | 3, 6 | Implemented locally |
 
@@ -140,12 +149,15 @@ Rules:
   005) and `supabase/worker/sla-worker.mjs` provide overdue receipt-review
   notifications. Runtime integration does not change SLA semantics. OQ-16
   migration prerequisite complete: migration 005 applied in Staging and
-  Production. Deployment and runtime validation remain pending;
-  `admin_notifications` Realtime publication is not part of this task.
-- **Phase 6 General Admin Notifications (planned, separate):** independent
-  in-panel event notifications (new order, new/corrected receipt, new review) with
-  history/navigation/read/read-all/realtime. Must keep OQ-16 SLA table/RPC/worker
-  isolated; do not force general events into SLA schema. See DECISIONS #40.
+  Production. Deployment and runtime validation remain pending; local-only
+  migration 017 adds the table to `supabase_realtime` for the unified inbox
+  without changing SLA behavior.
+- **Phase 6 General Admin Notifications (implemented locally, separate):** the
+  in-panel event inbox (new online order, new/corrected receipt, new review) has
+  history/navigation/read/read-all/Realtime. The OQ-16 SLA table/RPC/worker remain
+  isolated; general events are not forced into the SLA schema. Both sources now
+  render in one unified inbox with a single badge. See DECISIONS #40/#41/#42 and
+  §9 below. Migrations 016 and 017 are local-only.
 
 ### Public catalog reads
 
@@ -167,12 +179,13 @@ literal 404 requires `generateStaticParams` and data access before streaming,
 which needs real catalog data at build time and is out of scope.
 
 Image URLs come from the public `product-images` bucket. `next.config.ts` allows
-only exact HTTPS hosts on `/storage/v1/object/public/**`: it derives a pattern
-from `NEXT_PUBLIC_SUPABASE_URL` when parseable and always retains the known
-project host `hqemhwhwwjdfzpwqbory.supabase.co` as a fallback because the
-affected build did not expose the variable when the config was evaluated. No
-wildcard hosts, query strings or image-security relaxations are used. Set a
-valid URL at build time for Supabase client calls.
+exactly one bounded HTTPS remote pattern: `*.supabase.co` on
+`/storage/v1/object/public/**`, with no port or query string. The wildcard
+matches one Supabase project subdomain and is intentional so switching projects
+needs no code or config change; it does not depend on `NEXT_PUBLIC_SUPABASE_URL`
+at config evaluation time. No deprecated `images.domains`, unbounded wildcard,
+`unoptimized` setting or other image-security relaxation is used. Set a valid
+URL at build time for Supabase client calls.
 
 Follow-up: the public SELECT policies grant access `TO anon`. An authenticated
 non-admin needs a policy update once auth exists.
@@ -242,3 +255,83 @@ with a message naming the variable.
   varieties require no code change to expand.
 - **More administrators:** authentication is table/RLS-driven, not hard-coded;
   two administrators now, more later without restructuring.
+
+## 9. Unified admin notifications (Phase 6, local implementation)
+
+The two tables remain independent, but `/admin/notificaciones` is their single
+presentation inbox; DECISIONS #41 records the six #40 blockers and #42 records
+the unification, combined badge, clickable destinations and Realtime decision.
+
+- **Storage/write path:** `public.admin_general_notifications` (migration 016,
+  local-only) is written by `AFTER INSERT` triggers on online `orders` and
+  `product_reviews` and by an `AFTER UPDATE OF payment_id` trigger on
+  `receipt_submissions` guarded by `OLD.payment_id IS NULL AND NEW.payment_id IS
+  NOT NULL` (migrations 006/011 link evidence after `hold_order_reservations`
+  created the row). Private `SECURITY DEFINER` triggers call one private fanout
+  helper, inserting one row per active administrator inside the originating
+  transaction; there is no worker, polling loop or rewrite of older RPCs.
+- **Server layer:** `src/features/admin/general-notifications.ts` is a
+  `"use server"` + `server-only` module. Every read/action resolves the admin via
+  `requireActiveAdminId()`, uses the request-bound session client, filters by
+  that admin id and validates rows with Zod. Only `read_at` is mutable; mark-all
+  touches that admin's unread rows only. `general-notifications-helpers.ts` holds
+  client-safe keys, Spanish labels and navigation targets; missing targets yield
+  no link.
+- **Read layer:** `settings-read.ts` resolves SLA `receipt_submissions.order_id`
+  for real destinations (50-row cap, `truncated` flag); `general-notifications.ts`
+  keeps the 200-row general cap. `unified-notifications-helpers.ts` combines the
+  rows newest-first and derives `generalNotificationHref` or
+  `/admin/comprobantes?orderId=<orderId>`; a missing target id yields no link.
+- **Client layer:** `src/app/(admin)/admin/(panel)/notificaciones/page.tsx`
+  renders one Spanish inbox manager for both sources with explicit 200/50-row
+  truncation notes. Summary and destination are real accessible links. General
+  rows keep mark-read/unread; SLA rows keep mark-read only; mark-all calls two
+  narrowly scoped server actions sequentially. The sidebar shows one combined
+  badge with an `aria-label` in Spanish and no non-clickable topbar pill.
+- **Realtime boundary:** migrations 016 and local-only 017 add both tables to
+  `supabase_realtime` through catalog-based membership checks and keep the
+  **default replica identity** (no `REPLICA IDENTITY FULL`). The browser
+  subscriber uses `event: "INSERT"` on both, filters by the session-derived
+  `admin_id`, performs one delayed reconnect per channel on error/timeout, and
+  debounces `router.refresh()`. `payload.old` and UPDATE delivery are not used;
+  there is no polling. The database remains the source of truth.
+- **State:** migrations 016 and 017 exist locally and have **not** been applied
+  remotely; 017 only publishes `admin_notifications` to Realtime (no RLS, grant,
+  trigger, RPC or replica-identity change). Behavioral SQL tests were skipped
+  locally (no PostgreSQL binaries). Static/mocked tests, typecheck, ESLint and
+  the build were run for this change; runtime and remote validation remain open
+  phase gates. OQ-16 SLA worker activation is a separate track.
+
+## 10. Local UI feedback and notification opening (ADR #43)
+
+- **Cart flight boundary:** `src/features/cart/cart-flight.ts` is a client-safe
+  pub/sub with no server imports. `announceCartFlight` reads the clicked button's
+  rect immediately and broadcasts only `{ label, origin: { x, y } }`; no DOM node
+  is stored in React state. `CartFlightLayer` is a small Client Component mounted
+  in `SiteHeader`; it resolves `[data-cart-target]` at flight time, computes the
+  target center, skips on reduced motion, a missing endpoint or an offscreen
+  launch point, and renders `aria-hidden` chips in a `pointer-events-none fixed inset-0 z-[60]`
+  overlay. The 32px chip is centered with negative margins and animates with the
+  Web Animations API using pixel-only `translate()` and opacity keyframes (600 ms),
+  then unmounts on finish. Percentage `calc()` transforms are deliberately avoided
+  because they left the animation `pending` in Chromium; no custom keyframes are
+  needed and the chip never occupies header space. Toasts remain at `z-[80]`.
+- **Mobile navigation:** `SiteHeader` derives `mobileNavOpen` from `usePathname()`
+  so a route change closes the menu without a cascading state update in an
+  effect; Escape closes it and returns focus to the SVG toggle. The panel is an
+  `absolute inset-x-0 top-full z-40` overlay with 200 ms opacity/translate
+  transitions and inert closed links, so opening it does not push page content
+  down. The storefront layout wraps the header in `Suspense` because
+  `usePathname()` is runtime-only on partially prerendered tracking routes.
+  Desktop nav and bag behavior are not changed; the bag word/separator hide
+  below `sm` while the accessible label remains.
+- **Open-to-read:** the unified manager's shared click handler fires the existing
+  server actions from `onClick` only for unread rows with a real href and a safe
+  id. It is deliberately fire-and-forget; Next.js `Link` still owns navigation,
+  modifier clicks and keyboard activation, and no local read state is invented.
+- **Realtime toast:** `UnifiedNotificationsRealtime` calls the existing
+  `useToast()` provider with Spanish text derived from `payload.new` and a pure
+  dedupe helper keyed by real row id. The debounced refresh, one delayed
+  reconnect per channel, cleanup and INSERT-only configs remain exactly as #42.
+  There is no polling, permission prompt, service worker, VAPID, e-mail,
+  WhatsApp or other external delivery path.

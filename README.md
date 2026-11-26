@@ -3,8 +3,10 @@
 Independent e-commerce platform for a Venezuelan bakery selling individual cake
 portions, with a private administrative panel for two administrators.
 
-**Status: Phase 1 complete. All repository migrations are applied in both Supabase
-Staging and Supabase Production.** M2 (inventory foundation), M3 (orders and
+**Status: Phase 1 complete. Migrations 001–015 are applied in both Supabase
+Staging and Supabase Production; migrations 016 and 017 are local-only and not
+applied.**
+M2 (inventory foundation), M3 (orders and
 inventory reservations, including the in-place reservation/payment-attempt
 correction), the Phase 4 OQ-17 quote-acceptance transition and the Phase 6 OQ-16
 receipt-review SLA are implemented in migrations 002 through 005 and validated
@@ -27,9 +29,10 @@ acceptance of a manual delivery quote writes one fixed 20-minute window in
 `quote_acceptance_expires_at` and copies it to `expires_at`, leaving the
 historical `initial_expires_at` immutable. The public catalog reads active
 products at request time from the existing Supabase tables and renders `/` and
-`/productos/[slug]`. The admin panel has 11 locally implemented routes behind a
-fail-closed session gate: `/admin` (Resumen dashboard), orders, receipts,
-external payments, products, inventory, POS, cancellations and settings. The
+`/productos/[slug]`. The admin panel has 12 locally implemented sections behind
+a fail-closed session gate: `/admin` (Resumen dashboard), orders, notifications,
+receipts, external payments, products, reviews, inventory, POS, cancellations and
+settings. The
 storefront and admin UI work is uncommitted, with no PR. Two-admin auth
 provisioning (B2) and final catalog/seed data (B3) remain pending; unavailable
 admin reads show honest empty states. Other business flows remain backend work or
@@ -41,7 +44,8 @@ The functional specification is [`SPEC.md`](./SPEC.md) (Spanish).
 - Next.js 16 (App Router) + React 19 + TypeScript (strict mode)
 - Tailwind CSS 4
 - Supabase: PostgreSQL, Auth, Storage, Realtime via `@supabase/ssr` (project
-  provisioned; all migrations applied in Staging and Production)
+  provisioned; migrations 001–015 applied in Staging and Production; migrations
+  016–017 local-only)
 - Zod (validation), Vitest (tests), ESLint (flat config)
 - Deployed on Vercel
 
@@ -138,7 +142,7 @@ pasteleria-online/
 │   └── test/              # Shared testing utilities
 ├── public/                # Static assets
 ├── supabase/
-│   └── migrations/        # SQL migrations (all applied in Staging and Production)
+│   └── migrations/        # SQL migrations (001–015 applied remotely; 016–017 local-only)
 ├── .env.example           # Documented variable names, no real credentials
 ├── TASKS.md               # Phase checklist (done + next)
 └── SPEC.md                # Functional specification (Spanish)
@@ -155,11 +159,12 @@ Each folder inside `src/` contains a README with its rules and planned contents.
 3. Deploy the production branch.
 
 Note: the public catalog reads active products from Supabase at request time.
-`next.config.ts` allows only exact HTTPS Supabase Storage hosts on
-`/storage/v1/object/public/**`, deriving the host from
-`NEXT_PUBLIC_SUPABASE_URL` when available and retaining the known project host
-as a fallback. Set a valid `NEXT_PUBLIC_SUPABASE_URL` at build time for
-Supabase client calls. Other business flows remain backend or placeholder work.
+`next.config.ts` allows exactly one bounded HTTPS Supabase Storage pattern:
+`*.supabase.co` on `/storage/v1/object/public/**`, with no port or query string.
+The single-subdomain wildcard is intentional so switching Supabase projects
+needs no code or config change. Set a valid `NEXT_PUBLIC_SUPABASE_URL` at build
+time for Supabase client calls. Other business flows remain backend or
+placeholder work.
 
 ## Documentation
 

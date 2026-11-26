@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCart } from "@/features/cart/cart-context";
+import { announceCartFlight } from "@/features/cart/cart-flight";
 import { useToast } from "@/components/ui/toast";
 import type { CatalogProduct } from "../schemas";
 import type { DeliveryZone } from "../public-data";
@@ -41,7 +42,7 @@ export function ProductDetail({
   const effectiveQuantity =
     maxQuantity !== null ? Math.min(quantity, Math.max(1, maxQuantity)) : quantity;
 
-  function handleAdd() {
+  function handleAdd(event: MouseEvent<HTMLButtonElement>) {
     if (outOfStock) {
       setFeedback("Este producto no tiene existencias disponibles por ahora.");
       return;
@@ -62,6 +63,8 @@ export function ProductDetail({
     const message = `Agregaste ${qty} ${qty === 1 ? "unidad" : "unidades"} de ${product.name} a la bolsa.`;
     setFeedback(message);
     showToast(message, "success");
+    // Decorative only: start at the clicked button and fly to the bag counter.
+    announceCartFlight({ quantity: qty, origin: event.currentTarget });
   }
 
   return (

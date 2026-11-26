@@ -1,6 +1,5 @@
 ﻿import { Suspense, type ReactNode } from "react";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
-import { BellIcon } from "@/components/ui/icons";
 import { logoutAdmin } from "@/features/admin/auth/actions";
 
 /** Neutral, truthful note shown at the bottom of every admin screen. */
@@ -32,14 +31,15 @@ export function AdminAccessMessage({ message }: { message: string }) {
 
 /**
  * Shared admin frame: skip link, sidebar, session-neutral top bar and the
- * rounded content panel. No administrator identity or alert count is baked in.
+ * rounded content panel. Unread values arrive as an optional prop; no count is
+ * hard-coded and the top bar carries no duplicate alert pill.
  */
 export function AdminShell({
   children,
-  alertsLabel,
+  unreadCount,
 }: {
   children: ReactNode;
-  alertsLabel?: string;
+  unreadCount?: number | null;
 }) {
   return (
     <div className="admin-shell">
@@ -49,19 +49,13 @@ export function AdminShell({
 
       {/* usePathname may suspend below dynamic segments under Cache Components. */}
       <Suspense fallback={<div className="admin-sidebar" aria-hidden="true" />}>
-        <AdminSidebar />
+        <AdminSidebar unreadCount={unreadCount} />
       </Suspense>
 
       <div className="admin-content">
         <header className="admin-topbar">
           <p className="text-eyebrow">EL ATELIER / ADMIN</p>
           <div className="admin-topbar-actions">
-            {alertsLabel ? (
-              <p className="admin-alerts-pill">
-                <BellIcon className="size-4" />
-                {alertsLabel}
-              </p>
-            ) : null}
             <form action={logoutAdmin}>
               <button type="submit" className="admin-user-chip">
                 <span className="admin-user-avatar" aria-hidden="true">

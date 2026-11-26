@@ -74,9 +74,11 @@ Do not add a second service or a Background Worker.
 
 ## Prerequisites (complete)
 
-- All repository migrations are applied in both Supabase Staging and Supabase
+- Migrations 001–015 are applied in both Supabase Staging and Supabase
   Production, including `015_bcv_sync_attempts.sql` and
-  `005_receipt_sla_notifications.sql`.
+  `005_receipt_sla_notifications.sql`. General-notification migration
+  `016_general_admin_notifications.sql` is local-only and is not a prerequisite
+  for this worker.
 - BCV and OQ-16 migration prerequisites are complete. Worker deployment,
   production activation and runtime validation remain pending.
 

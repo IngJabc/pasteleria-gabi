@@ -5,7 +5,57 @@ export type Database = {
   
   "public": {
           Tables: {
-            "admin_notifications": {
+            "admin_general_notifications": {
+                  Row: {
+                    "admin_id": string,"created_at": string,"event_key": string,"event_type": string,"id": number,"order_id": number | null,"payment_id": number | null,"product_id": number | null,"read_at": string | null,"receipt_submission_id": number | null,"review_id": number | null,"summary": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "admin_id": string,"created_at"?: string,"event_key": string,"event_type": string,"id"?: never,"order_id"?: number | null,"payment_id"?: number | null,"product_id"?: number | null,"read_at"?: string | null,"receipt_submission_id"?: number | null,"review_id"?: number | null,"summary": string
+                  }
+                  Update: {
+                    "admin_id"?: string,"created_at"?: string,"event_key"?: string,"event_type"?: string,"id"?: never,"order_id"?: number | null,"payment_id"?: number | null,"product_id"?: number | null,"read_at"?: string | null,"receipt_submission_id"?: number | null,"review_id"?: number | null,"summary"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "admin_general_notifications_admin_id_fkey"
+      columns: ["admin_id"]
+isOneToOne: false
+      referencedRelation: "administrators"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "admin_general_notifications_order_id_fkey"
+      columns: ["order_id"]
+isOneToOne: false
+      referencedRelation: "orders"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "admin_general_notifications_payment_id_fkey"
+      columns: ["payment_id"]
+isOneToOne: false
+      referencedRelation: "payments"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "admin_general_notifications_product_id_fkey"
+      columns: ["product_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "admin_general_notifications_receipt_submission_id_fkey"
+      columns: ["receipt_submission_id"]
+isOneToOne: false
+      referencedRelation: "receipt_submissions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "admin_general_notifications_review_id_fkey"
+      columns: ["review_id"]
+isOneToOne: false
+      referencedRelation: "product_reviews"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"admin_notifications": {
                   Row: {
                     "admin_id": string,"created_at": string,"id": number,"interval_bucket": number,"read_at": string | null,"receipt_submission_id": number
                   }

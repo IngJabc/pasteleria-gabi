@@ -1,4 +1,5 @@
 ﻿import type { Metadata } from "next";
+import Link from "next/link";
 import {
   AdminBanner,
   AdminEmptyState,
@@ -10,10 +11,7 @@ import {
 } from "@/components/admin/admin-ui";
 import { describeBusinessHours } from "@/features/admin/components/ops/business-hours";
 import { formatDateTime } from "@/features/admin/format";
-import {
-  getAdminSettingsSnapshot,
-  listAdminNotifications,
-} from "@/features/admin/settings-read";
+import { getAdminSettingsSnapshot } from "@/features/admin/settings-read";
 import { listBcvRates } from "@/features/exchange-rates/admin-rates";
 import { StoreSettingsForm } from "@/features/admin/components/settings/store-settings-form";
 import { BcvRateForm } from "@/features/admin/components/settings/bcv-rate-form";
@@ -47,9 +45,8 @@ export const instant = false;
 /** Payment method data is configured via PaymentInstructionsForm below. */
 
 export default async function AdminSettingsPage() {
-  const [snapshot, notificationInbox, rateHistory] = await Promise.all([
+  const [snapshot, rateHistory] = await Promise.all([
     getAdminSettingsSnapshot(),
-    listAdminNotifications(),
     listBcvRates(),
   ]);
 
@@ -254,37 +251,17 @@ export default async function AdminSettingsPage() {
 
                 <AdminSurface className="p-5 sm:p-6">
                   <AdminSectionTitle>Dos manos, un mismo cuidado</AdminSectionTitle>
-                  <p className="mt-1 text-sm leading-6 text-muted">
-                    Bandeja de notificaciones de esta administración.
+                  <p className="mt-2 text-sm leading-6 text-muted">
+                    Todas las notificaciones de la administración —avisos generales y
+                    recordatorios SLA de comprobantes— se gestionan en una sola bandeja.
+                    Consulta allí el estado, los destinos y las acciones de lectura.
                   </p>
-                  <div className="mt-4 space-y-3">
-                    {notificationInbox.unavailable ? (
-                      <AdminBanner tone="pink">{notificationInbox.message}</AdminBanner>
-                    ) : notificationInbox.items.length === 0 ? (
-                      <AdminEmptyState
-                        title="Bandeja al día"
-                        description="No hay notificaciones registradas para esta administración."
-                      />
-                    ) : (
-                      notificationInbox.items.map((notification) => (
-                        <article
-                          key={notification.id}
-                          className="flex flex-wrap items-start justify-between gap-3 rounded-card border border-rose/60 bg-cream p-4"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-display font-bold text-plum">Administración</p>
-                            <p className="mt-1 text-sm leading-6 text-muted">
-                              Envío de comprobante #{notification.receiptSubmissionId} ·{" "}
-                              {formatDateTime(notification.createdAt)}
-                            </p>
-                          </div>
-                          <AdminStatusChip tone={notification.readAt ? "mint" : "yellow"}>
-                            {notification.readAt ? "Leída" : "Sin leer"}
-                          </AdminStatusChip>
-                        </article>
-                      ))
-                    )}
-                  </div>
+                  <Link
+                    href="/admin/notificaciones"
+                    className="mt-4 inline-flex min-h-11 cursor-pointer items-center justify-center rounded-full border-[3px] border-white bg-lavender px-6 py-2 font-display text-sm font-bold text-ink shadow-sticker-secondary transition-all hover:brightness-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-pink"
+                  >
+                    Abrir notificaciones
+                  </Link>
                 </AdminSurface>
               </>
             ),

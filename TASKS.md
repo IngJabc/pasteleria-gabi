@@ -8,10 +8,13 @@ verified — never mark a task done without running its validation.
 > **Phase 4**; the roadmap/tasking label for the same scope is **Phase 5**.
 > Both labels refer to the same work; historical headings are kept as written.
 
-> **Current migration status:** all repository migrations are applied in both
-> Supabase Staging and Supabase Production, including migration 005 and migration
-> 015. Historical branch notes that say a branch did not apply migrations describe
-> that branch only.
+> **Current migration status:** all repository migrations **except migrations
+> 016 and 017** are applied in both Supabase Staging and Supabase Production,
+> including migration 005 and migration 015.
+> `016_general_admin_notifications.sql` and
+> `017_unified_notifications_realtime.sql` exist locally only and have **not**
+> been applied remotely. Historical branch notes that say a branch did not
+> apply migrations describe that branch only.
 
 ---
 
@@ -311,8 +314,8 @@ Implementation order (each migration ships with its RLS policies; design source:
       `supabase/migrations/006_payments_and_verification.sql` (behaviorally
       validated on a disposable local PostgreSQL cluster; see the final
       implementation report for details). The branch did not apply migrations;
-      current confirmed status is all migrations applied in Staging and
-      Production. Adds `public.payments`,
+      current confirmed status is migrations 001–015 applied in Staging and
+      Production (016 is local-only). Adds `public.payments`,
       `public.payment_refunds`, `receipt_submissions.payment_id`, indexes, RLS
       and least-privilege grants, a private `payment-receipts` storage bucket
       with admin SELECT only, audit integration, a `private.require_active_admin`
@@ -387,8 +390,8 @@ Implementation order (each migration ships with its RLS policies; design source:
 Branch: `features/admin-notifications-docs`. This objective adds the local
 unified worker runtime, tests, configuration and deployment documentation; it does
 not add migrations/SQL or deploy the worker. That branch did not apply migrations;
-current confirmed status is all migrations applied in Staging and Production.
-BCV/SLA business logic and unrelated dirty files remain untouched.
+current confirmed status is migrations 001–015 applied in Staging and Production
+(016 is local-only). BCV/SLA business logic and unrelated dirty files remain untouched.
 
 **Status:** migration 005 and `sla-worker.mjs` were validated locally. OQ-16
 migration prerequisite complete: migration 005 applied in Staging and Production.
@@ -440,32 +443,163 @@ PASS; `git diff --check` PASS.
       admins, missing grants, and stalled cycles; document runbook and rollback
       (stop worker; no destructive DB rollback required for notifications rows).
 
-## Phase 6 — General Admin Notifications (architecture defined/planned, implementation pending)
+## Phase 6 — General Admin Notifications (implemented locally; migrations local-only, phase gate open)
 
-Branch: `features/admin-notifications-docs` (documentation only). **Separate from
-OQ-16 SLA inbox and BCV worker.** Do not force general events into SLA schema.
+The earlier documentation-only pass was on `features/admin-notifications-docs`
+(historical). **Separate from OQ-16 SLA inbox and BCV worker.** The general event
+model was not forced into the SLA schema. `/admin/notificaciones` is now the
+single unified inbox for both tables, with one combined sidebar badge. The
+implementation below is uncommitted in the working tree; no remote migration,
+deployment or runtime validation was performed.
 
-- [ ] **Resolve architecture decisions (DECISIONS #40 blockers)** before any
-      implementation: data model (extend vs separate table), per-event dedupe keys,
-      write path/atomicity, Realtime publication/RLS impact, read-state/mark-all
-      boundary, navigation contract.
-- [ ] **Event coverage**: new order; new payment receipt; corrected/resubmitted
-      payment receipt; new customer review.
-- [ ] **Recipients/visibility**: both active administrators; admin-only RLS;
-      no anon/non-admin/customer access.
-- [ ] **Functional behavior**: unread counter; notification list/history; navigate
-      to related order/payment/review; mark one read; mark all read; dedupe/idempotency;
-      realtime updates without page refresh; DB remains source of truth.
-- [ ] **Security/RLS/Realtime**: enforce per-admin read/update boundaries; Realtime
-      publication only for RLS-safe tables/columns; no PII/token leakage in payloads
-      or navigation targets.
-- [ ] **Idempotency**: deterministic event key per business transition; safe under
-      retries, reconnects, multi-tab, worker reruns.
-- [ ] **Validation criteria (future implementation)**: tests for RLS, dedupe,
-      event generation, realtime reconciliation, mark-one/mark-all, navigation,
-      and no regression to OQ-16 SLA behavior.
-- [ ] **Explicit exclusions**: no customer notifications, no email, no WhatsApp,
-      no BCV worker integration/changes, no OQ-16 semantic changes.
+- [x] **Resolve architecture decisions (DECISIONS #40 blockers):** accepted ADR
+      #41 records the six resolutions — separate table; event-prefixed deterministic
+      keys; transactional trigger/definer-fanout write path; RLS-scoped `read_at`
+      only; guarded Realtime publication with default replica identity; and a
+      stable Spanish navigation contract.
+- [x] **Data model / write path:** local migration
+      `supabase/migrations/016_general_admin_notifications.sql` creates
+      `public.admin_general_notifications` with `UNIQUE (event_key, admin_id)`,
+      full RLS/force RLS, column-level `SELECT`/`UPDATE(read_at)` grants, an
+      immutability trigger, a private `SECURITY DEFINER` fanout helper and three
+      transactional event triggers. The OQ-16 `admin_notifications` table,
+      `process_sla_notifications` RPC, SLA worker and receipt/SLA rules are
+      untouched; only the read model resolves `receipt_submissions.order_id`.
+- [x] **Event coverage:** `new_order` (online only), `payment_receipt`,
+      `receipt_correction` (via the guarded `payment_id` link transition from
+      migrations 006/011) and `product_review`.
+- [x] **Recipients/visibility:** one row per active administrator from the
+      session-independent fanout; admins read/update only their own rows through
+      `private.is_admin()` and `auth.uid()`; no anon/non-admin/customer access.
+- [x] **Functional behavior:** Spanish `/admin/notificaciones` unified inbox
+      manager showing general rows (200-row cap) and SLA rows (50-row cap) in one
+      newest-first list with explicit Spanish truncation notes. Every row's
+      summary and destination are accessible links when a real id exists. General
+      rows keep mark-read/unread; SLA rows keep mark-read only. Mark-all updates
+      both sources' own unread rows. One combined sidebar badge replaces the old
+      topbar pill; Configuración links to this inbox instead of duplicating it.
+- [x] **Security/RLS/Realtime:** no client INSERT/DELETE, no client-supplied admin
+      id, no trusted column updates; SLA mark-one rejects unsafe ids before any
+      write. Both tables are guarded by catalog-based `supabase_realtime`
+      membership checks with default replica identity. The unified subscriber
+      uses `INSERT`-only events and an `admin_id` filter derived from the session
+      per table, one delayed reconnect per channel, a debounced `router.refresh()`
+      and no polling; it ignores old-record payloads.
+- [x] **Idempotency:** `new_order:<order_id>`, `payment_receipt:<receipt_submission_id>`,
+      `receipt_correction:<receipt_submission_id>`, `product_review:<review_id>`
+      with `ON CONFLICT DO NOTHING`; safe across retries, reconnects and multi-tab use.
+- [x] **Navigation contract:** `new_order` → `/admin/pedidos/<order_id>`; both
+      receipt types → `/admin/comprobantes?orderId=<order_id>`; `product_review`
+      → `/admin/resenas?productId=<product_id>`; SLA rows →
+      `/admin/comprobantes?orderId=<order_id>` resolved from
+      `receipt_submissions.order_id`. A missing target renders no link and no
+      fabricated URL; no token or PII reaches the URL.
+- [x] **Static/mocked validation:** schema and contract tests, helper tests and
+      mocked server-action/Realtime tests are present. `database.types.ts` was
+      updated manually for the new table; regenerate/verify it when migration 016 is applied.
+- [ ] **Migrations 016 and 017 are local-only / NOT applied:** applying them in
+      Staging and Production is a human/remote action; no remote Supabase project
+      was contacted. 017 only publishes `admin_notifications` to Realtime and
+      changes no RLS/grant/function/trigger.
+- [ ] **Behavioral SQL tests skipped locally:** the behavioral migration suite is
+      written but skipped because local PostgreSQL binaries were unavailable
+      (7 skipped in the focused run). Run it against a disposable cluster or
+      Staging before closing the gate.
+- [ ] **Runtime/remote validation pending:** verify trigger fanout, RLS boundaries,
+      mark-one/mark-all and Realtime INSERT delivery in Staging/Production; revisit
+      the default replica identity only if that validation proves UPDATE delivery is required.
+- [ ] **Separate OQ-16 activation track remains open:** worker deployment/activation
+      and runtime validation are still pending and are **not** closed by this feature.
+- [ ] **Explicit exclusions (preserved):** no customer notifications, no email, no
+      WhatsApp, no BCV worker integration/changes, no OQ-16 semantic changes.
+
+Validation (general notifications plus unification, implementer-reported and
+independently rechecked locally after final repairs): an earlier focused run for
+the isolated general-notification phase passed **26 tests / 7 skipped**, full
+`npm test` passed **321 tests / 127 skipped**, the receipt/payment/SLA/inventory
+regression subset passed **112 tests / 74 skipped**, and `npx eslint` covered
+**22 changed `.ts`/`.tsx` files**. After the unified inbox, combined badge,
+clickable rows and two-table Realtime changes, the final focused run passed
+**143 tests / 7 skipped (21 files passed, 1 skipped)** and full `npm test`
+passed **352 tests / 127 skipped (43 files passed, 9 skipped)**; `npm run
+typecheck`, `npx eslint` on all **34 changed `.ts`/`.tsx` files**, `npm run build`
+(with `/admin/notificaciones` in the route table) and `git diff --check` all
+exited 0. The whitespace check only reported the pre-existing CRLF notice for
+`layout.tsx`. Independent read-only code and security reviews found no blocking findings;
+their low-severity repairs (SLA safe-integer guard, partial-failure empty state,
+cautious truncation wording, Realtime cleanup contract, README migration status)
+are included above. Repository-wide
+`npm run lint` remains red on pre-existing unmodified files
+(`src/components/ui/image-modal.tsx` error and two
+`quote-acceptance-migration.test.ts` warnings); no unrelated file was changed.
+No remote validation is claimed.
+
+## Phase 6 — Local UI improvements (same branch, ADR #43)
+
+Local-only presentation work on `features/admin-general-notifications`; no new
+migration, schema change, remote contact or Staging verification. The animated
+cart chip and mobile hamburger were exercised in the local browser after the
+user reported that the first version rendered static chips and shifted layout.
+
+- [x] **Flying cart number:** the real «Agregar al carrito» button announces a
+      decorative `+N` chip with its clicked position; a small client pub/sub
+      broadcasts numeric coordinates only, and a header-mounted fixed overlay
+      resolves the bag at click time and animates the chip to it with the Web
+      Animations API (transform/opacity only, 600 ms, `onfinish` cleanup). It is
+      skipped for reduced motion, a missing endpoint or an offscreen launch point;
+      the bag itself may be scrolled away and the chip flies toward its real
+      coordinates. It never occupies header space. Totals, storage, server
+      validation and the existing toast are unchanged.
+- [x] **Mobile hamburger menu:** the storefront header has a 44×44 px SVG
+      toggle with `aria-controls`, toggling `aria-expanded` and Spanish labels
+      («Abrir menú» / «Cerrar menú»). The mobile-only nav is an `absolute
+      top-full` overlay that fades/slides in 200 ms without pushing page content;
+      closed links are inert via `aria-hidden` and `tabIndex={-1}`. It has the
+      three real destinations, closes on link click, Escape (returning focus)
+      and any `usePathname` change (including browser history; query-only
+      navigation is intentionally not subscribed); a
+      Suspense boundary allows prerendering. The desktop nav and bag link
+      behavior stay intact, and the literal «Bolsa» text collapses below `sm`
+      to avoid 375 px horizontal scroll.
+- [x] **Auto-read on open:** both the summary and destination links of an
+      unread row with a real href call one shared handler that invokes the
+      existing general (`read: true`) or SLA mark-read action. It is
+      fire-and-forget: no `preventDefault`, modifier/keyboard activation stays
+      native, failures do not invent local state, and the separate mark-read
+      and mark-all controls remain unchanged. A successful SLA update refreshes
+      the route so the shared unread badge is not stale.
+- [x] **In-app Realtime toast:** the existing `useToast()` provider shows a
+      Spanish toast for each INSERT on either table, using only `payload.new`;
+      a general summary is shown when valid, otherwise generic Spanish text is
+      used. Repeated deliveries of the same row id are suppressed, while the
+      debounced `router.refresh()`, one reconnect per channel, cleanup and
+      INSERT-only configs from #42 are preserved. No polling, service worker,
+      VAPID, permission prompt, e-mail, WhatsApp or other external channel.
+- [x] **Manual local browser interaction checked:** the `+1` chip was sampled
+      moving from the clicked button (`x=144,y=373`) toward the bag center
+      (`x≈884,y≈-852`), fading to zero and unmounting after the 600 ms animation;
+      the mobile nav was sampled fading/sliding open and closed with the main
+      content top unchanged. No browser console errors were observed. Formal
+      375 px timing review remains a human checkpoint.
+- [ ] **Runtime remote validation pending:** no Staging/Production delivery or
+      migration application was performed or claimed here.
+
+Independent code and security reviews found no blocking findings. They prompted
+two small repairs: route-change menu reset now also covers browser history, and
+a successful SLA auto-read refreshes the shared unread badge. Final local
+validation: the UI-focused suite passed **32 tests / 6 files** and the broader
+notification/UI focused suite **90 passed / 7 skipped (17 files passed, 1
+skipped)**; `npm test` passed **379 tests / 127 skipped (47 files passed, 9
+skipped)**; `npm run typecheck`, `npx eslint` (all **47 changed `.ts`/`.tsx` files**
+before the visual repair, then the **6 final cart/menu files**), `npm run
+build` and `git diff --check` all exited 0 (the whitespace
+check only reported the known CRLF notices for the pre-existing admin layout
+and the rewritten `site-header.tsx`). After the user-reported visual defect,
+the cart chip and mobile menu were corrected and revalidated: focused tests
+**20 passed / 3 files**, `npm test` **379 passed / 127 skipped**, typecheck and
+changed-file ESLint exit 0, plus manual local browser sampling of chip motion
+and non-shifting menu overlay. No Staging/Production Realtime, migration or
+other remote validation is claimed.
 
 ## Phase 1A.2 — Final OQ resolution ✅ (complete)
 
@@ -731,8 +865,9 @@ and `npm run build` all passed locally.
 Explicitly **not** done in Phase 4: the branch did not apply migration 004;
 payment/receipt/tracking **UI** was not part of that work (the payments and
 receipt-storage **backend** is now migration 006). Current confirmed status is
-all migrations applied in Staging and Production. Deployment remains pending.
-OQ-16 notifications/scheduler are implemented separately in Phase 6.
+migrations 001–015 applied in Staging and Production (016 is local-only).
+Deployment remains pending. OQ-16 notifications/scheduler are implemented
+separately in Phase 6.
 
 **Phase 6 / OQ-16 local validation (final):** `npm test`: **143/143 passed**
 (34 new static/behavioral/worker tests vs. the 109-test Phase 4 suite) ·
@@ -894,10 +1029,11 @@ explicit nulls in the validated wire contract.
   HTTP status 200 and emits `<meta name="robots" content="noindex">` for that
   response. A literal 404 requires `generateStaticParams` and data access before
   streaming, which needs real catalog data at build time and is out of scope.
-- `next.config.ts` image allowlist hardened: exact HTTPS hosts on
-  `/storage/v1/object/public/**`, derived from `NEXT_PUBLIC_SUPABASE_URL` when
-  parseable and retaining the known project hostname as a fallback (see the
-  Supabase Storage image host configuration section below).
+- `next.config.ts` image allowlist: exactly one bounded HTTPS pattern for
+  `*.supabase.co` on `/storage/v1/object/public/**` (no port or query string).
+  The single-subdomain wildcard is intentional so switching Supabase projects
+  needs no code or config change (see the Supabase Storage image host
+  configuration section below).
 
 Validation (public catalog): `npm test` passed 27 files and 299 tests. The focused
 catalog suite passed 1 file and 8 tests. `npm run lint` reported 0 errors and
@@ -1044,9 +1180,11 @@ Blocked / not invented:
 - [ ] **B2** — administrator emails/Auth provisioning remains an external business dependency; no admin accounts/credentials invented.
 - [ ] **B3** — final catalog/seed/photographs/business content remain external dependencies; realistic empty states used where unavailable.
 
-Scope note: all repository migrations, including 014 and 015, are applied in
-Staging and Production. Admin reads still show honest unavailable states where
-runtime or business data is missing. No Render deployment was performed.
+Scope note: at that time all repository migrations, including 014 and 015, were
+applied in Staging and Production; the later local-only migration 016 is the
+exception and has not been applied remotely. Admin reads still show honest
+unavailable states where runtime or business data is missing. No Render
+deployment was performed.
 
 Validation (local, 2026-11-22, run by the orchestrator after the final edits):
 
@@ -1192,36 +1330,39 @@ message; a duplicate `observed_at` unique violation does too.
 Branch: `fix/supabase-storage-image-host` (from `39ec072bd7275405b4310d127a36849ccc12563f`). No commit, push, PR, merge, remote migration, deployment, environment or secret change performed.
 
 Root cause: `images.remotePatterns` was derived solely from
-`NEXT_PUBLIC_SUPABASE_URL`; when that variable was absent or invalid at
-configuration time the allowlist was empty, and the bucket-specific path allowed
-only `/storage/v1/object/public/product-images/**`. Both cases make `next/image`
-report the external hostname as unconfigured.
+`NEXT_PUBLIC_SUPABASE_URL` plus one exact fallback hostname. When that variable
+was absent, invalid, non-HTTPS or changed after the server started, the
+allowlist did not match the project ref actually serving images, and
+`next/image` reported the external hostname as unconfigured.
 
-- [x] `next.config.ts` now allows only exact HTTPS Supabase Storage patterns on
-      `/storage/v1/object/public/**` with empty port and no query string. It
-      still derives a pattern from `NEXT_PUBLIC_SUPABASE_URL` when parseable and
-      always includes the known project hostname
-      `hqemhwhwwjdfzpwqbory.supabase.co` as a fallback, deduplicating identical
-      entries.
-- [x] No wildcard hosts, deprecated `images.domains`, `unoptimized`,
-      `dangerouslyAllowSVG` or other image-security relaxation was added. All
-      unrelated Next.js settings remain unchanged.
-- [x] Added `src/infrastructure/next-config.test.ts` covering missing, matching,
-      different and invalid Supabase URL values, plus preservation of unrelated
-      configuration.
-- [x] Documentation updated in `README.md`, `docs/ARCHITECTURE.md` and
-      `docs/ROADMAP.md`.
+- [x] `next.config.ts` now allows exactly one bounded HTTPS pattern: hostname
+      `*.supabase.co` (one Supabase project subdomain), empty port, pathname
+      `/storage/v1/object/public/**` and empty search. The wildcard is
+      intentional so switching Supabase projects needs no code or config
+      change; it no longer depends on `NEXT_PUBLIC_SUPABASE_URL` at config
+      evaluation time. Requests are still restricted to HTTPS public Storage
+      paths with no custom port or query string.
+- [x] No unbounded wildcard hosts or paths, deprecated `images.domains`,
+      `unoptimized`, `dangerouslyAllowSVG` or other image-security relaxation
+      was added. All unrelated Next.js settings remain unchanged.
+- [x] `src/infrastructure/next-config.test.ts` asserts exactly one bounded
+      Supabase Storage pattern for missing, previous production, new staging,
+      invalid, non-HTTPS, wildcard and non-Supabase
+      `NEXT_PUBLIC_SUPABASE_URL` values, plus a direct check with Next's
+      `matchRemotePattern` that both project URLs match while non-Supabase,
+      private-path and query-string URLs are rejected, no image-security
+      relaxation and preservation of unrelated configuration.
+- [x] Documentation updated in `README.md`, `docs/ARCHITECTURE.md`,
+      `docs/ROADMAP.md` and `TASKS.md`.
 
-Validation (actual, after the hostname-validation fix):
-`npx vitest run src/infrastructure/next-config.test.ts` — PASS (7/7).
-`npm test` — PASS (33 files: 295 passed and 120 skipped tests; 8 files skipped).
-`npm run typecheck` — PASS. `npm run build` — PASS (Next.js 16.4.6
-Turbopack; Cache Components and Partial Prefetching enabled; 22 app routes).
-`git diff --check` — PASS. ESLint on the two changed TypeScript files — PASS.
-Full `npm run lint` — FAIL on a pre-existing, unrelated
-`src/components/ui/image-modal.tsx` react-hooks error plus two pre-existing
-warnings in `quote-acceptance-migration.test.ts`; neither file was changed by
-this objective. A direct check with Next's installed matcher confirmed that the
-pattern accepts `/storage/v1/object/public/**` URLs on the exact host and
-rejects private paths, query strings, HTTP and other hosts. No commit, push,
-PR, deployment, environment, Storage policy or database change was made.
+Validation (actual, after the bounded-pattern fix):
+`npm.cmd test -- src/infrastructure/next-config.test.ts` — PASS (1 file, 9 tests,
+including a direct `matchRemotePattern` check for the staging URL).
+`npm.cmd test` — PASS (36 files passed and 9 skipped; 323 tests passed and 127 skipped).
+`npm.cmd run typecheck` — PASS (exit 0).
+`npx.cmd eslint next.config.ts src/infrastructure/next-config.test.ts` — PASS (exit 0).
+`npm.cmd run build` — PASS (Next.js 16.4.6 Turbopack; Cache Components and
+Partial Prefetching enabled; `/admin/notificaciones` present). `git diff --check` — PASS.
+Full `npm run lint` was not rerun in this objective; its pre-existing unrelated
+failures remain out of scope. No commit, push, PR, deployment, environment,
+Storage policy or database change was made.

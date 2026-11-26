@@ -273,6 +273,7 @@ Anti-patterns deliberately avoided:
 | `register_payment`, `register_payment_for_tracking`, `submit_payment_evidence`, `approve_payment`, `reject_payment`, `register_pos_cash_sale`, `record_refund` (Payments Module — implemented in migration 006) | **service role only** (explicit `revoke … from public, anon, authenticated`; `SECURITY INVOKER`, pinned `search_path`, `VOLATILE` where mutating) | every payment mutation runs from server code; the admin id is checked via `private.require_active_admin`, and guest flows use only the private tracking token |
 | `private.require_active_admin(p_admin_id uuid)` (migration 006) | `service_role` only (revoked from `public`, `anon`, `authenticated`) | rechecks that the session-derived administrator is active inside every mutating RPC; never reads `auth.uid()` |
 | `get_order_payment_summary(p_order_id)` (migration 006, read-only) | `authenticated` + `service_role`, revoked from `anon` and `public` | per-currency dashboard aggregation under RLS; replaces the earlier `order_payment_summary` view sketch (no view is created) |
+| `private.create_admin_general_notification`, `private.enforce_admin_general_notification_immutability`, `private.general_notification_order_trigger`, `private.general_notification_receipt_trigger`, `private.general_notification_review_trigger` (migration 016, **local only**) | `service_role` only (explicit revoke from `public`, `anon`, `authenticated`); all `SECURITY DEFINER` with `search_path = ''` | private fanout/immutability/trigger helpers for general notifications; clients cannot choose a recipient or mutate event identity, and no public RPC is added |
 
 Rules for every function (design-level):
 
@@ -509,8 +510,10 @@ upload/verification/SLA/RPC flows are unchanged; no migration was needed.
   UPDATE/DELETE from the primary key alone; `REPLICA IDENTITY FULL` would widen
   the WAL payload without improving this boundary and is not used.
 - Notifications are informational only — the database stays the source of
-  truth (SPEC §13); a forged Realtime message cannot change state. No frontend
-  subscription was added by this milestone.
+  truth (SPEC §13); a forged Realtime message cannot change state. Migration 008
+  added no frontend subscription; the unified subscriber described in §10.3 is
+  a later addition. Local-only migration 017 adds `admin_notifications` to the
+  same publication with the same catalog guard and no authorization change.
 
 ### 10.2 OQ-16 SLA notifications — operationalization (activation pending)
 
@@ -518,9 +521,9 @@ upload/verification/SLA/RPC flows are unchanged; no migration was needed.
   `receipt_submissions`/`admin_notifications`, RLS/force RLS, service-role-only
   RPCs, and dedupe `(receipt_submission_id, admin_id, interval_bucket)`. It is
   applied in Staging and Production. `sla-worker.mjs` runs startup + 15-min cycles
-  calling `process_sla_notifications`; UI reads unread count and settings inbox;
-  mark-as-read action exists but no exposed control. There is no deployment or
-  runtime evidence for the unified worker.
+  calling `process_sla_notifications`; the unified inbox reads the rows and
+  resolves `receipt_submissions.order_id`, and mark-read is exposed there. There
+  is no deployment or runtime evidence for the unified worker.
 - **Activation prerequisites:** OQ-16 migration prerequisite complete: migration
   005 applied in Staging and Production. Update the
   **existing `pasteleria-bcv-worker` Render Web Service** to the unified runtime
@@ -539,30 +542,78 @@ upload/verification/SLA/RPC flows are unchanged; no migration was needed.
   admin UI continues to gate by `requireActiveAdminId()` and RLS. Monitor cycle
   failures and stalled runs.
 
-### 10.3 Phase 6 General Admin Notifications (planned, separate)
+### 10.3 Phase 6 Unified Admin Notifications (implemented locally)
 
-- **Scope (planned, not implemented):** internal admin-panel notifications for
-  both active administrators. Events: new order, new payment receipt,
-  corrected/resubmitted payment receipt, new customer review. UI behavior:
-  unread counter, list/history, navigation to related order/payment/review, mark
-  one read, mark all read, dedupe/idempotency, realtime updates without refresh.
-- **Isolation from OQ-16:** preserve SLA table/RPC/worker semantics; do not force
-  general events into SLA schema or overload `process_sla_notifications`.
-- **Security invariants:** DB source of truth; RLS enabled/forced; admins read/update
-  only own addressed notifications (or narrowly scoped RPCs); no anon/public/customer
-  access; no client-supplied admin identity trusted; service-role writes only where
-  required and justified.
-- **Realtime:** publication of selected notification rows must preserve RLS
-  boundaries; payloads must not expose data not already readable; subscriptions
-  reconcile with server state and do not authorize mutations.
-- **Idempotency:** deterministic dedupe key per event type/transition, DB-enforced
-  uniqueness; safe across retries, reconnects, multi-tab, worker reruns.
-- **Unresolved decisions (block implementation):** extend vs separate table;
-  per-event dedupe keys; corrected-receipt mapping; write path/atomicity; mark-all-read
-  RLS update vs RPC; publication/replica identity impact; navigation contract;
-  audit/logging expectations.
+All six blockers recorded in #40 are resolved by accepted DECISIONS #41; DECISIONS
+#42 records the unified presentation, badge, destinations and Realtime decision.
+The implementation is local and uncommitted: migrations 016 and 017 have **not**
+been applied remotely, behavioral SQL tests were skipped locally (no PostgreSQL
+binaries), and Staging/Production runtime validation remains pending.
+
+- **Scope (implemented locally):** internal admin-panel notifications for both
+  active administrators via `public.admin_general_notifications`, a table
+  separate from the OQ-16 `admin_notifications` inbox. Events: new **online**
+  order, new payment receipt, corrected/resubmitted receipt, new product review.
+  The Spanish `/admin/notificaciones` unified inbox provides one combined unread
+  count, merged history, accessible destinations, general mark-read/unread,
+  SLA mark-read, mark-all on both sources and Realtime refresh.
+- **Isolation from OQ-16:** the SLA table/RPC/worker/24 h + 15 min semantics and
+  dedupe key are unchanged; general events are not forced into the SLA schema and
+  `process_sla_notifications` is not overloaded. The two sources remain separate
+  in the database, but the UI has one combined sidebar badge and no topbar pill
+  (DECISIONS #42). SLA mark-all is a narrow direct `UPDATE` scoped by
+  `requireActiveAdminId()`, `.eq("admin_id", adminId)` and `.is("read_at", null)`.
+- **RLS and grants:** RLS is enabled **and** forced. Active administrators
+  SELECT only rows where `admin_id = auth.uid()` and `private.is_admin()`, and
+  UPDATE under the same predicates. Table privileges are revoked from
+  `public`/`anon`/`authenticated`; `authenticated` receives `SELECT` and
+  `UPDATE (read_at)` only, `service_role` receives ALL. There is **no client
+  INSERT or DELETE** policy or grant and no trusted client-supplied admin id:
+  server actions resolve the session through `requireActiveAdminId()` and filter
+  by that id (mark-all also requires `read_at IS NULL`).
+- **Immutability:** a `BEFORE UPDATE` trigger rejects any change to identity,
+  event type/key, targets, summary or `created_at`, and forbids `read_at` earlier
+  than `created_at`; the column grant is a second boundary. The database remains
+  the source of truth (SPEC §13).
+- **Definer functions:** the private fanout helper and three event triggers are
+  `SECURITY DEFINER` with `search_path = ''` and `EXECUTE` only for `service_role`
+  (or trigger context). They insert one row per **active** administrator with
+  `ON CONFLICT (event_key, admin_id) DO NOTHING` in the originating transaction.
+  No new worker, external channel or rewrite of older RPCs was introduced.
+- **Realtime boundary:** migrations 016 and local-only 017 add both tables to
+  `supabase_realtime` via catalog-based membership checks and keep the **default
+  replica identity** (no `REPLICA IDENTITY FULL`). The browser subscribes to
+  `event: "INSERT"` on both, filters each channel on the session-derived
+  `admin_id`, uses INSERT rows as the source of truth, ignores `payload.old` and
+  does not depend on UPDATE delivery; one delayed reconnect per channel and a
+  debounced `router.refresh()` are used, with no polling. RLS — not the old record
+  image — is the authorization boundary, so a forged event cannot mutate state.
+  Revisit the replica identity only if Staging runtime validation proves UPDATE
+  delivery is required.
+- **Idempotency and navigation:** keys are `new_order:<order_id>`,
+  `payment_receipt:<receipt_submission_id>`,
+  `receipt_correction:<receipt_submission_id>` and `product_review:<review_id>`;
+  they are safe across retries, reconnects and multi-tab use. Targets are
+  `/admin/pedidos/<order_id>`, `/admin/comprobantes?orderId=<order_id>` (both
+  receipt types) and `/admin/resenas?productId=<product_id>`; a missing target
+  renders no link / an unavailable state, with no token or PII in the URL.
+- **Local UI-only additions (ADR #43):** opening an unread link calls the same
+  session-scoped, RLS-protected mark-read actions as the explicit buttons; the
+  click handler adds no client write privilege, no client-supplied admin id and
+  no optimistic/local read state. The Realtime toast is a browser-only
+  presentation of `payload.new` rows already authorized by RLS; it does not
+  mutate database state, read `payload.old`, request notification permission,
+  register a service worker/VAPID, send e-mail/WhatsApp or open polling/external
+  channels. Repeated delivery of the same real row id is deduplicated in memory
+  only. The storefront flight and mobile menu are decorative/navigation-only and
+  touch no cart validation, prices, stock or localStorage schema.
+- **Residual Staging checks:** apply migration 016, confirm fanout to both active
+  administrators, RLS isolation between admins, mark-one/mark-all behavior and
+  Realtime INSERT delivery under RLS; verify the manually updated
+  `database.types.ts` after regeneration. OQ-16 worker activation stays on its
+  own track.
 - **Exclusions:** no customer-facing notifications, no email, no WhatsApp, no BCV
-  worker changes/integration.
+  worker changes/integration, no OQ-16 behavior changes.
 
 ### 10.1 Store settings schedules (OQ-8)
 

@@ -52,6 +52,12 @@ Los precios se publicarán en USD.
 
 El cliente podrá consultar productos y agregar distintas variedades al carrito.
 
+**Interacción local del carrito:** al pulsar «Agregar al carrito» aparece una
+insignia decorativa `+N` que viaja desde el botón hasta el contador de la bolsa.
+El efecto usa solo transformaciones y opacidad, no crea desplazamiento de la
+página y se omite por completo cuando el dispositivo solicita movimiento
+reducido. No modifica totales, precios, inventario ni la confirmación existente.
+
 ## 4. Moneda y tasa de cambio
 
 La moneda comercial será USD.
@@ -394,6 +400,36 @@ Se utilizará Supabase Realtime para notificar a ambos administradores cuando:
 - Se supere el plazo de 24 horas de revisión de un comprobante (sección 14): se notificará a todos los administradores activos y se repetirá cada 15 minutos hasta que ese comprobante sea aprobado o rechazado, sin cancelar el pedido ni liberar inventario. Ejecuciones simultáneas del proceso de notificación no deben generar avisos duplicados para el mismo comprobante e intervalo.
 
 Las notificaciones serán informativas. La fuente de verdad siempre será la base de datos.
+
+**Nota de implementación (fase 6):** las notificaciones generales del panel se
+registran en `public.admin_general_notifications` (migración local `016`, todavía
+no aplicada en Staging ni Producción) con claves deterministas por evento, RLS
+limitado al administrador destinatario y actualización en Realtime sin sondeo. Cubren pedidos online,
+comprobantes nuevos o corregidos y reseñas de producto. El plazo de 24 horas y el aviso
+cada 15 minutos de la sección 14 siguen implementados por separado en
+`admin_notifications` y no se modifican.
+
+La bandeja «Notificaciones» (`/admin/notificaciones`) es el único lugar del panel
+donde se consultan ambos orígenes: muestra hasta 200 avisos generales y hasta 50
+avisos SLA, indica cuándo existe historial adicional y permite abrir un destino
+real mediante enlaces accesibles. El resumen y el destino de cada fila enlazan al
+recurso correspondiente; si falta un identificador de destino no se inventa un
+enlace. Los avisos generales pueden marcarse como leídos o no leídos y los avisos
+SLA solo como leídos; «Marcar todo como leído» actualiza ambas tablas. La barra
+lateral muestra una sola insignia con la suma de los contadores reales, sin
+insignia cuando ningún origen está disponible. La migración local `017` (tampoco
+aplicada remotamente) publica `admin_notifications` en Realtime para que la
+bandeja se actualice ante nuevos avisos sin sondeo, conservando la identidad de
+réplica predeterminada y sin alterar RLS, permisos, disparadores, RPC ni las
+reglas de comprobantes. No se añaden canales externos.
+
+Al abrir el resumen o el destino de una notificación no leída que tenga un enlace
+real, la fila se marca como leída mediante la acción autorizada correspondiente
+(general o SLA), sin impedir la navegación ni alterar los botones independientes
+de lectura. Los eventos `INSERT` de Realtime también muestran un aviso temporal
+dentro del panel, con texto en español y sin duplicar reenvíos de la misma fila.
+No se solicitan permisos del navegador ni se usan notificaciones del sistema,
+service workers, correo, WhatsApp ni otros canales externos.
 
 ## 14. Horarios
 

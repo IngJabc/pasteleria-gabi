@@ -60,6 +60,7 @@ export async function confirmPayInStoreOrder(): Promise<ConfirmPayInStoreResult>
   }
 
   const order = data as {
+    order_id?: number | null;
     status?: string;
     fulfillment_type?: string;
     delivery_requires_quote?: boolean;
@@ -80,6 +81,23 @@ export async function confirmPayInStoreOrder(): Promise<ConfirmPayInStoreResult>
       ok: false,
       error:
         "El pago en tienda solo está disponible para retiro en atelier o delivery gratis en este paso.",
+    };
+  }
+
+  const orderId = Number(order.order_id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    return { ok: false, error: "No se pudo validar el pedido." };
+  }
+
+  const { error: notifyError } = await supabase.rpc(
+    "notify_online_order_formalized",
+    { p_order_id: orderId },
+  );
+  if (notifyError) {
+    // Keep the checkout cookie so the customer can retry formalization.
+    return {
+      ok: false,
+      error: "No se pudo confirmar el pedido. Inténtalo de nuevo.",
     };
   }
 

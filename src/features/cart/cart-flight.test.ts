@@ -5,8 +5,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CART_TARGET_SELECTOR,
+  MAX_VISIBLE_CART_FLIGHTS,
   announceCartFlight,
+  cartFlightAnimationKeyframes,
+  cartFlightBounceKeyframes,
   cartFlightCenter,
+  cartFlightLaneOffset,
   formatCartFlightLabel,
   prefersReducedCartFlightMotion,
   isCartFlightPointVisible,
@@ -130,5 +135,98 @@ describe("cart flight pub/sub", () => {
     } finally {
       unsubscribeFromCartFlights(listener);
     }
+  });
+});
+
+describe("cart flight presentation helpers", () => {
+  it("exposes the bag selector and a four-flight visibility cap", () => {
+    expect(CART_TARGET_SELECTOR).toBe("[data-cart-target]");
+    expect(MAX_VISIBLE_CART_FLIGHTS).toBe(4);
+  });
+
+  it("assigns deterministic, distinct bounded lanes to the first four ids", () => {
+    const lanes = [1, 2, 3, 4].map((id) => cartFlightLaneOffset(id));
+    expect(lanes).toEqual([
+      { x: 0, y: 0 },
+      { x: -22, y: 0 },
+      { x: 22, y: 0 },
+      { x: 0, y: -22 },
+    ]);
+    expect(new Set(lanes.map((lane) => `${lane.x},${lane.y}`)).size).toBe(4);
+    expect(cartFlightLaneOffset(1)).toEqual(cartFlightLaneOffset(1));
+    expect(cartFlightLaneOffset(5)).toEqual(lanes[0]);
+    expect(cartFlightLaneOffset(9)).toEqual(lanes[0]);
+    for (const lane of lanes) {
+      expect(Math.abs(lane.x)).toBeLessThanOrEqual(22);
+      expect(Math.abs(lane.y)).toBeLessThanOrEqual(22);
+    }
+  });
+
+  it("falls back safely for invalid ids and returns detached objects", () => {
+    const invalidIds: unknown[] = [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+      "2",
+    ];
+    for (const id of invalidIds) {
+      expect(cartFlightLaneOffset(id as number)).toEqual({ x: 0, y: 0 });
+    }
+
+    const first = cartFlightLaneOffset(2);
+    first.x = 999;
+    first.y = -999;
+    expect(cartFlightLaneOffset(2)).toEqual({ x: -22, y: 0 });
+  });
+
+  it("keeps the chip readable with pixel-only transforms at every keyframe", () => {
+    const frames = cartFlightAnimationKeyframes(
+      { x: 10, y: 20 },
+      { x: 210, y: 180 },
+    );
+    expect(frames).toHaveLength(3);
+    expect(frames.map((frame) => frame.offset)).toEqual([0, 0.82, 1]);
+    expect(frames.every((frame) => frame.opacity === 1)).toBe(true);
+    expect(frames.map((frame) => frame.transform)).toEqual([
+      "translate(0px, 0px) scale(1)",
+      "translate(200px, 160px) scale(1.08)",
+      "translate(200px, 160px) scale(1)",
+    ]);
+    for (const frame of frames) {
+      expect(frame).not.toHaveProperty("filter");
+      expect(frame).not.toHaveProperty("boxShadow");
+      const transform = String(frame.transform);
+      expect(transform).toMatch(/^translate\(-?\d+px, -?\d+px\) scale\(1(?:\.08)?\)$/);
+      expect(transform).not.toContain("%");
+      expect(transform).not.toContain("calc(");
+    }
+  });
+
+  it("keeps animation frames detached from subsequent calls", () => {
+    const first = cartFlightAnimationKeyframes({ x: 0, y: 0 }, { x: 10, y: 20 });
+    first[0].opacity = 0;
+    first[1].transform = "blur(4px)";
+    const second = cartFlightAnimationKeyframes({ x: 0, y: 0 }, { x: 10, y: 20 });
+    expect(second[0].opacity).toBe(1);
+    expect(second[1].transform).toBe("translate(10px, 20px) scale(1.08)");
+  });
+
+  it("bounces the bag with bounded transform-only keyframes", () => {
+    const frames = cartFlightBounceKeyframes();
+    expect(frames).toHaveLength(3);
+    expect(frames.map((frame) => frame.offset)).toEqual([0, 0.5, 1]);
+    expect(frames.map((frame) => frame.transform)).toEqual([
+      "translateY(0px) scale(1)",
+      "translateY(-2px) scale(1.06)",
+      "translateY(0px) scale(1)",
+    ]);
+    for (const frame of frames) {
+      expect(Object.keys(frame).sort()).toEqual(["offset", "transform"]);
+      expect(String(frame.transform)).not.toContain("calc(");
+    }
+    expect(cartFlightBounceKeyframes()).not.toBe(frames);
   });
 });

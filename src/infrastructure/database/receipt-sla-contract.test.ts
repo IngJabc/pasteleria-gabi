@@ -53,6 +53,7 @@ describe("migration 005 contract (static)", () => {
       "015_bcv_sync_attempts.sql",
       "016_general_admin_notifications.sql",
       "017_unified_notifications_realtime.sql",
+      "018_formalized_order_notifications.sql",
     ]);
   });
 

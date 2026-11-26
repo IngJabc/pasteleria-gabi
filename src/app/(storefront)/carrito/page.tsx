@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CartClient, CheckoutSteps } from "@/features/cart/components/cart-client";
-import { getActiveDeliveryZones } from "@/features/catalog/public-data";
+import {
+  getActiveDeliveryZones,
+  getActiveProductStockMap,
+} from "@/features/catalog/public-data";
 import { ArrowRightIcon } from "@/components/ui/icons";
 
 export const metadata: Metadata = {
@@ -9,12 +12,15 @@ export const metadata: Metadata = {
   description: "Revisa tu bolsa antes de confirmar la entrega.",
 };
 
-// Loads active zones at request time so cart can reflect a previously selected
-// delivery zone fee honestly; no zone/price is invented.
+// Loads active zones and stock at request time so cart can reflect a previously
+// selected delivery zone fee honestly and cap its local quantity steppers.
 export const instant = false;
 
 export default async function CartPage() {
-  const zones = await getActiveDeliveryZones().catch(() => []);
+  const [zones, stock] = await Promise.all([
+    getActiveDeliveryZones().catch(() => []),
+    getActiveProductStockMap().catch(() => ({})),
+  ]);
   return (
     <main className="container-page flex flex-col gap-8 py-10">
       <div className="flex items-center justify-between gap-4">
@@ -32,7 +38,7 @@ export default async function CartPage() {
         Tu carrito feliz
       </h1>
 
-      <CartClient zones={zones} />
+      <CartClient zones={zones} stockByProductId={stock} />
     </main>
   );
 }

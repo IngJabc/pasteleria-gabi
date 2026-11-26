@@ -21,8 +21,62 @@ export type CartFlightAnnouncement = {
 
 type CartFlightListener = (flight: CartFlight) => void;
 
+/** The real header bag link, read only at animation time. */
+export const CART_TARGET_SELECTOR = "[data-cart-target]";
+
+/** At most four decorative chips may be in flight at once. */
+export const MAX_VISIBLE_CART_FLIGHTS = 4;
+
+const CART_FLIGHT_LANES: readonly CartFlightPoint[] = [
+  { x: 0, y: 0 },
+  { x: -22, y: 0 },
+  { x: 22, y: 0 },
+  { x: 0, y: -22 },
+];
+
 const listeners = new Set<CartFlightListener>();
 let nextFlightId = 1;
+
+/**
+ * Deterministic bounded lane for a flight id. The first four ids are distinct;
+ * later ids wrap around. Every call returns a fresh object so callers cannot
+ * mutate the shared lane table.
+ */
+export function cartFlightLaneOffset(id: number): CartFlightPoint {
+  if (!Number.isSafeInteger(id) || id <= 0) return { x: 0, y: 0 };
+  const lane = CART_FLIGHT_LANES[(id - 1) % CART_FLIGHT_LANES.length];
+  return { x: lane.x, y: lane.y };
+}
+
+/**
+ * Pixel-only WAAPI frames. Opacity stays at 1 throughout, and the final frame
+ * returns to scale 1 so the label is fully readable until the chip is removed.
+ */
+export function cartFlightAnimationKeyframes(
+  start: CartFlightPoint,
+  end: CartFlightPoint,
+): Keyframe[] {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  return [
+    { offset: 0, opacity: 1, transform: "translate(0px, 0px) scale(1)" },
+    {
+      offset: 0.82,
+      opacity: 1,
+      transform: `translate(${dx}px, ${dy}px) scale(1.08)`,
+    },
+    { offset: 1, opacity: 1, transform: `translate(${dx}px, ${dy}px) scale(1)` },
+  ];
+}
+
+/** Subtle transform-only bag bounce played when a chip really arrives. */
+export function cartFlightBounceKeyframes(): Keyframe[] {
+  return [
+    { offset: 0, transform: "translateY(0px) scale(1)" },
+    { offset: 0.5, transform: "translateY(-2px) scale(1.06)" },
+    { offset: 1, transform: "translateY(0px) scale(1)" },
+  ];
+}
 
 /** Subscribe to announced flights; the returned function unsubscribes. */
 export function subscribeToCartFlights(listener: CartFlightListener): () => void {

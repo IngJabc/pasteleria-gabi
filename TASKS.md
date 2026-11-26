@@ -9,12 +9,14 @@ verified — never mark a task done without running its validation.
 > Both labels refer to the same work; historical headings are kept as written.
 
 > **Current migration status:** all repository migrations **except migrations
-> 016 and 017** are applied in both Supabase Staging and Supabase Production,
-> including migration 005 and migration 015.
-> `016_general_admin_notifications.sql` and
-> `017_unified_notifications_realtime.sql` exist locally only and have **not**
-> been applied remotely. Historical branch notes that say a branch did not
-> apply migrations describe that branch only.
+> 016, 017 and 018** are applied in both Supabase Staging and Supabase
+> Production, including migration 005 and migration 015. You reported that a
+> human applied `016_general_admin_notifications.sql`,
+> `017_unified_notifications_realtime.sql` and
+> `018_formalized_order_notifications.sql` in Staging only. Production
+> application and runtime Realtime verification remain pending human gates; no
+> agent verified Staging or runtime delivery here. Historical branch notes that
+> say a branch did not apply migrations describe that branch only.
 
 ---
 
@@ -443,7 +445,7 @@ PASS; `git diff --check` PASS.
       admins, missing grants, and stalled cycles; document runbook and rollback
       (stop worker; no destructive DB rollback required for notifications rows).
 
-## Phase 6 — General Admin Notifications (implemented locally; migrations local-only, phase gate open)
+## Phase 6: General Admin Notifications (implemented locally; Staging application user-reported, Production and runtime gate open)
 
 The earlier documentation-only pass was on `features/admin-notifications-docs`
 (historical). **Separate from OQ-16 SLA inbox and BCV worker.** The general event
@@ -497,10 +499,13 @@ deployment or runtime validation was performed.
 - [x] **Static/mocked validation:** schema and contract tests, helper tests and
       mocked server-action/Realtime tests are present. `database.types.ts` was
       updated manually for the new table; regenerate/verify it when migration 016 is applied.
-- [ ] **Migrations 016 and 017 are local-only / NOT applied:** applying them in
-      Staging and Production is a human/remote action; no remote Supabase project
-      was contacted. 017 only publishes `admin_notifications` to Realtime and
-      changes no RLS/grant/function/trigger.
+- [ ] **Migration gate for 016, 017 and 018:** you reported that a human
+      applied them in Staging only. Production application and runtime Realtime
+      verification remain human and pending; no agent contacted a remote or
+      verified Staging here. 017 only publishes `admin_notifications` to
+      Realtime and changes no RLS/grant/function/trigger. 018 moves the
+      `new_order` event to order formalization and changes no other business
+      behavior.
 - [ ] **Behavioral SQL tests skipped locally:** the behavioral migration suite is
       written but skipped because local PostgreSQL binaries were unavailable
       (7 skipped in the focused run). Run it against a disposable cluster or
@@ -512,6 +517,23 @@ deployment or runtime validation was performed.
       and runtime validation are still pending and are **not** closed by this feature.
 - [ ] **Explicit exclusions (preserved):** no customer notifications, no email, no
       WhatsApp, no BCV worker integration/changes, no OQ-16 semantic changes.
+- [x] **New-order notification timing (local bug fix; implemented and validated
+      locally):** the admin `new_order` alert fired on «Confirmar entrega» in
+      `/checkout/entrega` instead of «Hacer pedido» in `/checkout/pago`. Acceptance
+      criteria: local migration `018_formalized_order_notifications.sql` drops
+      016's old `new_order` trigger and function; digital checkout emits through
+      the `receipt_submissions` `payment_id` link trigger; pay-in-store calls the
+      service-role-only `notify_online_order_formalized` RPC; key
+      `new_order:<order_id>` and summary «Nuevo pedido online recibido.» stay
+      unchanged; early rows stay as history with no backfill or deletion; no order
+      creation, price, stock, reservation, payment, RLS, policy, publication or
+      replica-identity behavior changes. Migration 018 was local-only at
+      implementation. You reported that a human applied migrations 016, 017 and
+      018 in Staging only. Production application and runtime Realtime checks
+      remain human and pending: formalized orders must alert both active admins,
+      and delivery-only drafts must not. No agent verified Staging or runtime
+      delivery here. Focused local suites passed; see the final validation record
+      below.
 
 Validation (general notifications plus unification, implementer-reported and
 independently rechecked locally after final repairs): an earlier focused run for
@@ -550,6 +572,20 @@ user reported that the first version rendered static chips and shifted layout.
       the bag itself may be scrolled away and the chip flies toward its real
       coordinates. It never occupies header space. Totals, storage, server
       validation and the existing toast are unchanged.
+- [ ] **Cart chip visual repair (ADR #43 local amendment; validation pending):**
+      keep the `+N` chip at opacity `1` for the whole flight with high-contrast
+      plum/white styling and `font-black` weight; scale `1 → 1.08 → 1` only near
+      the bag. Assign deterministic lane offsets from the flight id and cap
+      simultaneous flights at four so rapid adds stay distinguishable: start at
+      origin plus lane, end at cart center plus a reduced lane offset. On real
+      WAAPI finish, bounce the bag with transform-only keyframes
+      (`scale 1 → 1.06 → 1`, `translateY 0 → -2px → 0`); another arrival cancels
+      and restarts that bounce instead of stacking it. Reduced motion skips both
+      effects. No fade, blur, glow, trails, filter, `calc()` transform, custom
+      CSS keyframes or new dependency; the chip does not change cart data. An
+      earlier local browser sample noted that the chip faded to zero before
+      unmount; that sample does not validate this repair. Local validation is
+      pending.
 - [x] **Mobile hamburger menu:** the storefront header has a 44×44 px SVG
       toggle with `aria-controls`, toggling `aria-expanded` and Spanish labels
       («Abrir menú» / «Cerrar menú»). The mobile-only nav is an `absolute
@@ -581,6 +617,23 @@ user reported that the first version rendered static chips and shifted layout.
       the mobile nav was sampled fading/sliding open and closed with the main
       content top unchanged. No browser console errors were observed. Formal
       375 px timing review remains a human checkpoint.
+- [x] **Storefront stock guards (local bug fix; implemented and validated
+      locally):** on `/productos/[slug]`, «Agregar al carrito» previously allowed
+      repeated clicks past displayed stock while the `+/-` selector respected it.
+      A pure `resolveAddToCartCapacity` helper now gives both controls the same
+      remaining capacity: server-provided `available` minus that product's quantity already
+      in the local bag. `/carrito` also allowed unlimited `+` clicks; it now uses
+      a server-rendered active-product stock map and the pure
+      `canIncreaseCartItemQuantity(available, quantity)` helper.
+      `getActiveProductStockMap()` reuses `getProductStockMap` and the
+      service-role-only `get_product_stock` RPC, reads no inventory tables
+      directly, and fails closed to `{}`. At the limit, `+` disables, gives an
+      accurate accessible label, and shows a Spanish `LiveRegion` explanation;
+      `-` stays enabled so stale over-stock carts can be corrected. Unknown
+      stock keeps the no-client-cap fallback and server checkout revalidation.
+      No inventory write, price, checkout, reservation, `localStorage` schema,
+      cart context or server-validation change. Focused local suites passed;
+      see the final validation record below.
 - [ ] **Runtime remote validation pending:** no Staging/Production delivery or
       migration application was performed or claimed here.
 
@@ -600,6 +653,64 @@ the cart chip and mobile menu were corrected and revalidated: focused tests
 changed-file ESLint exit 0, plus manual local browser sampling of chip motion
 and non-shifting menu overlay. No Staging/Production Realtime, migration or
 other remote validation is claimed.
+
+### Final local validation (ADR #44 cart stock guard and ADR #45 new-order timing)
+
+Local implementation is complete for both fixes. The combined focused Vitest run
+passed **16 files and 158 tests**, covering cart capacity, the new cart client
+contract, cart flight, migration 018 and related database contracts, and guest
+payments. The cart-only focused run passed **4 files and 47 tests**; the
+migration-018-focused run passed **5 files and 47 tests**.
+
+- [x] ESLint returned no output for all **22 changed or added `.ts`/`.tsx`
+      files**.
+- [x] `npm run typecheck` passed with no diagnostics.
+- [x] `npm run build` passed with Next.js 16.4.6 and generated **25 routes**.
+- [x] `git diff --check` was clean.
+- [ ] `npm test` is not green: **549 total tests, 546 passed, 3 failed; 59 files,
+      57 passed, 2 failed**. The three failures are unchanged pre-existing and
+      unrelated: `general-notifications-migration.test.ts` local PostgreSQL query
+      `operator is not unique: text || "char"`;
+      `general-notifications-migration.test.ts` `pago_movil requires a BCV
+      snapshot and VES total`; `general-notifications-manager.test.ts` static
+      expectation using `\n` against a CRLF source file. Do not weaken or edit
+      any test.
+- [ ] Migration gate: you reported that a human applied migrations 016, 017 and
+      018 in Staging only. Production application and runtime Realtime delivery
+      verification remain human and pending. This work performed no commit, push,
+      PR, remote migration application, Supabase connection, deployment or secret
+      change; no agent verified Staging or runtime delivery.
+
+### Investigation note: admin Realtime report (open, not a fix)
+
+Report text: “también revvisa porqué no veo las notificaciones generales
+en tiempo real, tengo que recargar la págian para verlas, en el panel admin me
+refiero”. Local code mounts `UnifiedNotificationsRealtime` in the admin panel
+layout inside `ToastProvider`. It subscribes to `INSERT` on
+`admin_general_notifications` and `admin_notifications` with a server-derived
+`admin_id` filter, debounces `router.refresh()`, raises a Spanish in-app toast
+and makes one delayed reconnect per failed channel.
+
+Leading cause at investigation time: migrations 016 and 017 were local-only and
+unapplied remotely. 016 creates and publishes `admin_general_notifications`
+plus its triggers; 017 publishes `admin_notifications` to `supabase_realtime`.
+Without publication membership, no Postgres Changes event reaches the browser,
+so the inbox and badge change only on reload through the server read path.
+
+You later reported a Staging-only human application of 016, 017 and 018; that
+report does not confirm runtime Realtime delivery. Installed
+`@supabase/supabase-js` 2.119.0 sets Realtime auth on
+`INITIAL_SESSION`/`SIGNED_IN`/`TOKEN_REFRESHED`, and `@supabase/realtime-js`
+calls `setAuth` on connect; no repo evidence supports an auth race. This note
+does not claim a fix or remote validation.
+
+Human gate: confirm the reported Staging application of 016/017, then apply
+016/017/018 in Production; confirm both tables are in `supabase_realtime`;
+trigger real general events for both active admins; verify INSERT delivery,
+toast, inbox and badge update without reload; verify RLS and `admin_id`
+filtering. Keep the INSERT-only/no-pull architecture and no polling. Clarify
+whether the report covers general event rows or the unified inbox including
+OQ-16 SLA rows; OQ-16 worker deployment remains a separate track.
 
 ## Phase 1A.2 — Final OQ resolution ✅ (complete)
 

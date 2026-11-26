@@ -78,6 +78,18 @@ describe("checkout rate server actions", () => {
     expect(createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
+  it("does not expose admin configuration diagnostics to public checkout callers", async () => {
+    publicRpc.mockResolvedValue({
+      data: null,
+      error: { message: "Invalid API key", code: "42501" },
+    });
+    expect(await getCurrentBcvRate()).toEqual({
+      ok: false,
+      error: "No se pudo consultar la tasa. Inténtalo de nuevo.",
+    });
+    expect(createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
   it("rejects a malformed rate payload without a fallback", async () => {
     publicRpc.mockResolvedValue({
       data: { ...productionRate, as_of: undefined },

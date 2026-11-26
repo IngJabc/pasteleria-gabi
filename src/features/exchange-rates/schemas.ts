@@ -182,12 +182,23 @@ export function classifyBcvFailure({ message, code }: BcvRpcFailure): BcvFailure
   return "unknown";
 }
 
-/** Database messages become stable Spanish text; SQL never reaches a caller. */
-export function bcvPublicError(message: string, fallback: string, code?: string | null): string {
-  const category = classifyBcvFailure({ message, code });
-  if (category === "server_configuration") return bcvConfigurationError;
-  if (category === "service_unavailable") return bcvUnavailableError;
-  if (category === "duplicate_observed_at") return bcvDuplicateObservedAtError;
+/**
+ * Database messages become stable Spanish text; SQL never reaches a caller.
+ * Infrastructure classification is opt-in so public checkout errors keep their
+ * existing generic fallback and do not expose internal diagnostics.
+ */
+export function bcvPublicError(
+  message: string,
+  fallback: string,
+  code?: string | null,
+  options: { classifyInfrastructure?: boolean } = {},
+): string {
+  if (options.classifyInfrastructure === true) {
+    const category = classifyBcvFailure({ message, code });
+    if (category === "server_configuration") return bcvConfigurationError;
+    if (category === "service_unavailable") return bcvUnavailableError;
+    if (category === "duplicate_observed_at") return bcvDuplicateObservedAtError;
+  }
 
   if (message.includes("no active BCV rate")) {
     return "No hay una tasa BCV activa disponible. El pedido conserva su total en USD.";

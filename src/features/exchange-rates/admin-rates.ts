@@ -44,7 +44,12 @@ function logFailure(operation: string, failure: BcvRpcFailure, category: BcvFail
 function rpcFailure(operation: string, failure: BcvRpcFailure): Failure {
   const category = classifyBcvFailure(failure);
   logFailure(operation, failure, category);
-  return { ok: false, error: bcvPublicError(failure.message, genericError, failure.code) };
+  return {
+    ok: false,
+    error: bcvPublicError(failure.message, genericError, failure.code, {
+      classifyInfrastructure: true,
+    }),
+  };
 }
 
 async function withAdmin<T>(
